@@ -1,0 +1,29 @@
+{
+  "name": "flowtrack",
+  "version": "1.0.0",
+  "description": "Minimalist task and habit manager built with PHP, MySQL, AlpineJS, and TailwindCSS.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manisacharya/FlowTrack.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/manisacharya/FlowTrack/issues"
+  },
+  "homepage": "https://github.com/manisacharya/FlowTrack#readme",
+  "dependencies": {
+    "body-parser": "^2.2.1",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "sqlite3": "^5.1.7"
+  }
+}

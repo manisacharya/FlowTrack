@@ -1,20 +1,35 @@
 # FlowTrack
 
-Minimalist task and habit manager built with PHP, MySQL, AlpineJS, and TailwindCSS.
+Minimalist task and habit manager built with Node.js, Express, SQLite, AlpineJS, and TailwindCSS.
 
 ## Setup
-- Start Apache and MySQL in XAMPP.
-- Ensure this project lives in `htdocs/FlowTrack`.
-- Visit `http://localhost/FlowTrack/`.
-- The app will auto-create the `flowtrack` database and tables on first API call.
 
-## Endpoints
-- `api/tasks.php` GET/POST/PUT/DELETE
-- `api/categories.php` GET/POST/DELETE
-- `api/habits.php` GET/POST/DELETE
-- `api/mark_habit.php` POST?id=HABIT_ID
-- `api/metrics.php` GET
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-## Notes
-- Default DB credentials: user `root`, empty password.
-- Adjust in `api/config.php` if needed. 
+2. Start the server:
+   ```bash
+   npm start
+   ```
+   Or run the executable directly:
+   ```bash
+   ./src/server.js
+   ```
+
+3. Visit `http://localhost:3000`.
+
+## Database
+The application uses SQLite (`database.sqlite`). The database file will be automatically created in the project root upon the first run.
+
+## API Endpoints
+- `/api/tasks` GET/POST/PUT/DELETE
+- `/api/categories` GET/POST
+- `/api/habits` GET/POST/DELETE
+- `/api/mark_habit` POST?id=HABIT_ID
+- `/api/metrics` GET
+- `/api/routines` GET/POST/PUT/DELETE
+
+## Legacy
+The original PHP backend files have been moved to `legacy_api/`.
