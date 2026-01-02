@@ -1,19 +1,34 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FlowTrack</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <style> body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto} </style>
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡️</text></svg>">
+  <style>
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto
+    }
+
+    [x-cloak] {
+      display: none !important;
+    }
+  </style>
 </head>
+
 <body class="bg-zinc-50 text-zinc-900">
-  <div class="max-w-5xl mx-auto p-6" x-data="appState()" x-init="init()">
-    <div class="h-44 md:h-60 rounded-xl overflow-hidden relative mb-6"
-         style="background-image: linear-gradient(to bottom, rgba(24,24,27,0.10), rgba(24,24,27,0.10)), url('./assets/cover.jpg'); background-size: cover; background-position: center;">
+  <div class="max-w-6xl mx-auto p-4 md:p-6" x-data="appState()" x-init="init()">
+
+    <!-- Cover Image -->
+    <div class="h-44 md:h-60 rounded-xl overflow-hidden relative mb-6 shadow-md"
+      style="background-image: linear-gradient(to bottom, rgba(24,24,27,0.20), rgba(24,24,27,0.10)), url('./assets/cover.jpg'); background-size: cover; background-position: center;">
       <div class="absolute top-2 right-2">
         <input type="file" id="coverInput" class="hidden" @change="
           async ($event) => {
@@ -22,167 +37,672 @@
             const form = new FormData();
             form.append('file', f);
             await fetch('./api/upload_cover', { method: 'POST', body: form });
-            // Force reload of the image by appending a cache-busting query
             $event.target.value = '';
             window.location.reload();
           }
         ">
-        <label for="coverInput" class="text-xs px-2 py-1 rounded bg-white/70 hover:bg-white cursor-pointer">Change cover</label>
+        <label for="coverInput"
+          class="text-xs px-2 py-1 rounded bg-white/70 hover:bg-white cursor-pointer transition-colors">Change
+          cover</label>
+      </div>
+
+      <!-- User Stats Overlay -->
+      <div class="absolute bottom-4 left-4 text-white drop-shadow-md">
+        <div class="flex items-center gap-3">
+          <div
+            class="h-12 w-12 rounded-full bg-zinc-900/80 border-2 border-white/50 backdrop-blur-sm flex items-center justify-center text-xl font-bold">
+            <span x-text="stats.level"></span>
+          </div>
+          <div>
+            <div class="text-sm font-medium opacity-90">Level <span x-text="stats.level"></span></div>
+            <div class="text-xs opacity-75" x-text="stats.points + ' XP'"></div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <header class="flex items-center justify-between mb-6">
-      <h1 class="text-2xl font-semibold">FlowTrack</h1>
-      <button @click="createHabit()" class="px-3 py-1.5 rounded bg-zinc-900 text-white text-sm">New</button>
+    <!-- Header & Nav -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+      <div class="flex items-center gap-4">
+        <h1 class="text-2xl font-semibold flex items-center gap-2">
+          FlowTrack <span
+            class="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 border border-yellow-200"
+            x-show="stats.level > 1">Pro</span>
+        </h1>
+        <nav class="flex bg-zinc-200/50 p-1 rounded-lg">
+          <button @click="switchView('habits')" class="px-3 py-1 text-sm rounded-md transition-all"
+            :class="view==='habits' ? 'bg-white shadow-sm text-zinc-900 font-medium' : 'text-zinc-500 hover:text-zinc-700'">Habits</button>
+          <button @click="switchView('routines')" class="px-3 py-1 text-sm rounded-md transition-all"
+            :class="view==='routines' ? 'bg-white shadow-sm text-zinc-900 font-medium' : 'text-zinc-500 hover:text-zinc-700'">Routines</button>
+        </nav>
+      </div>
+      <div class="flex items-center gap-3">
+        <button @click="openFlowMode()"
+          class="text-sm px-3 py-1.5 rounded bg-purple-50 text-purple-600 hover:bg-purple-100 font-medium flex items-center gap-1"
+          title="Focus Timer"><span>⏱️</span> Flow Mode</button>
+        <button @click="showCoach = true"
+          class="text-sm px-3 py-1.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium flex items-center gap-1"><span>🤖</span>
+          Coach</button>
+        <button x-show="view==='habits'" @click="openHabitModal()"
+          class="px-3 py-1.5 rounded bg-zinc-900 text-white text-sm hover:bg-zinc-800 transition-colors shadow-sm">+ New
+          Habit</button>
+        <button x-show="view==='routines'" @click="openRoutineModal()"
+          class="px-3 py-1.5 rounded bg-zinc-900 text-white text-sm hover:bg-zinc-800 transition-colors shadow-sm">+ New
+          Routine</button>
+      </div>
     </header>
 
-    <section class="space-y-6">
-      <div class="flex items-end gap-3">
-        <div class="flex-1">
-          <label class="block text-sm text-zinc-600">Habit</label>
-          <input x-model="habitForm.title" class="w-full border border-zinc-200 rounded px-3 py-2" placeholder="e.g., Read 20 min"/>
+    <!-- Toast Container -->
+    <div class="fixed bottom-4 right-4 z-50 space-y-2 pointer-events-none">
+      <template x-for="toast in toasts" :key="toast.id">
+        <div
+          class="px-4 py-2 rounded shadow-lg text-white text-sm transition-all transform pointer-events-auto flex items-center gap-2"
+          :class="toast.type === 'error' ? 'bg-red-500' : (toast.type === 'info' ? 'bg-blue-600' : 'bg-green-600')"
+          x-show="toast.visible" x-transition:enter="translate-y-2 opacity-0"
+          x-transition:enter-end="translate-y-0 opacity-100" x-transition:leave="opacity-0 scale-90">
+          <span x-text="toast.message"></span>
         </div>
-        <div>
-          <label class="block text-sm text-zinc-600">Frequency</label>
-          <select x-model="habitForm.frequency" class="border border-zinc-200 rounded px-3 py-2">
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-          </select>
-        </div>
-        <button @click="createHabit()" class="h-10 px-4 rounded bg-zinc-900 text-white">Add</button>
-      </div>
+      </template>
+    </div>
 
-      <div class="flex items-center justify-between">
-        <div class="text-sm text-zinc-600" x-text="weekTitle()"></div>
+    <!-- Confirmation Modal -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      x-show="confirmModal.open" x-cloak x-transition.opacity>
+      <div class="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl transform transition-all"
+        @click.away="confirmModal.open = false">
+        <h3 class="text-lg font-semibold mb-2">Confirm Action</h3>
+        <p class="text-zinc-600 mb-6" x-text="confirmModal.message"></p>
+        <div class="flex justify-end gap-3">
+          <button @click="confirmModal.open = false"
+            class="px-4 py-2 rounded text-zinc-600 hover:bg-zinc-100">Cancel</button>
+          <button @click="confirmModal.onConfirm(); confirmModal.open = false"
+            class="px-4 py-2 rounded bg-zinc-900 text-white hover:bg-zinc-800">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Habit Form Modal -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      x-show="habitModal.open" x-cloak x-transition.opacity>
+      <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl transform transition-all"
+        @click.away="habitModal.open = false">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold" x-text="habitModal.isEdit ? 'Edit Habit' : 'New Habit'"></h3>
+          <button @click="habitModal.open = false" class="text-zinc-400 hover:text-zinc-600">✕</button>
+        </div>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs text-zinc-500 mb-1">Title</label>
+            <input x-model="habitForm.title" class="w-full border border-zinc-200 rounded px-3 py-2 text-sm"
+              placeholder="e.g., Read 20 min" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-zinc-500 mb-1">Frequency</label>
+              <select x-model="habitForm.frequency"
+                class="w-full border border-zinc-200 rounded px-3 py-2 text-sm bg-white">
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-500 mb-1">Icon</label>
+              <select x-model="habitForm.icon" class="w-full border border-zinc-200 rounded px-3 py-2 text-sm bg-white">
+                <option value="📝">📝</option>
+                <option value="💧">💧</option>
+                <option value="🏃">🏃</option>
+                <option value="🧘">🧘</option>
+                <option value="📚">📚</option>
+                <option value="💤">💤</option>
+                <option value="🥗">🥗</option>
+                <option value="💻">💻</option>
+                <option value="⚡️">⚡️</option>
+                <option value="🎨">🎨</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-zinc-500 mb-1">Color</label>
+              <input type="color" x-model="habitForm.color"
+                class="w-full h-[38px] border border-zinc-200 rounded p-1 cursor-pointer" />
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-500 mb-1">Notify At</label>
+              <input type="time" x-model="habitForm.notification_time"
+                class="w-full border border-zinc-200 rounded px-2 py-2 text-sm" />
+            </div>
+          </div>
+          <button @click="saveHabit()"
+            class="w-full py-2.5 rounded bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-800 transition-colors shadow-lg shadow-zinc-900/20">Save
+            Habit</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Routine Form Modal -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      x-show="routineModal.open" x-cloak x-transition.opacity>
+      <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl transform transition-all"
+        @click.away="routineModal.open = false">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold" x-text="routineModal.isEdit ? 'Edit Routine Item' : 'New Routine Item'">
+          </h3>
+          <button @click="routineModal.open = false" class="text-zinc-400 hover:text-zinc-600">✕</button>
+        </div>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs text-zinc-500 mb-1">Description</label>
+            <input x-model="routineForm.text" class="w-full border border-zinc-200 rounded px-3 py-2 text-sm"
+              placeholder="e.g., Drink water" />
+          </div>
+          <div>
+            <label class="block text-xs text-zinc-500 mb-1">Type</label>
+            <select x-model="routineForm.kind" class="w-full border border-zinc-200 rounded px-3 py-2 text-sm bg-white">
+              <option value="morning">Morning Routine</option>
+              <option value="night">Night Routine</option>
+            </select>
+          </div>
+          <button @click="saveRoutine()"
+            class="w-full py-2.5 rounded bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-800 transition-colors shadow-lg shadow-zinc-900/20">Save
+            Routine</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Flow Mode Modal -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" x-show="flowModeOpen"
+      x-cloak x-transition.opacity>
+      <div
+        class="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-2xl p-8 w-full max-w-md shadow-2xl transform transition-all relative"
+        @click.away="closeFlowMode()">
+        <button @click="closeFlowMode()" class="absolute top-4 right-4 text-purple-400 hover:text-purple-600">✕</button>
+
+        <div class="text-center mb-6">
+          <h3 class="text-2xl font-bold text-purple-900 mb-2">⏱️ Flow Mode</h3>
+          <p class="text-sm text-purple-600">Deep focus session</p>
+        </div>
+
+        <!-- Timer Display -->
+        <div class="bg-white/60 rounded-xl p-8 mb-6 text-center">
+          <div class="text-7xl font-bold text-purple-900 mb-4" x-text="formatTime(timerSeconds)"></div>
+          <div class="flex items-center justify-center gap-4">
+            <div class="flex gap-2">
+              <button @click="setTimerPreset(5)"
+                :class="timerPreset === 5 ? 'bg-purple-500 text-white' : 'bg-white/50 text-purple-700'"
+                class="px-3 py-1 rounded text-sm font-medium" :disabled="timerActive">5m</button>
+              <button @click="setTimerPreset(15)"
+                :class="timerPreset === 15 ? 'bg-purple-500 text-white' : 'bg-white/50 text-purple-700'"
+                class="px-3 py-1 rounded text-sm font-medium" :disabled="timerActive">15m</button>
+              <button @click="setTimerPreset(25)"
+                :class="timerPreset === 25 ? 'bg-purple-500 text-white' : 'bg-white/50 text-purple-700'"
+                class="px-3 py-1 rounded text-sm font-medium" :disabled="timerActive">25m</button>
+              <button @click="setTimerPreset(45)"
+                :class="timerPreset === 45 ? 'bg-purple-500 text-white' : 'bg-white/50 text-purple-700'"
+                class="px-3 py-1 rounded text-sm font-medium" :disabled="timerActive">45m</button>
+              <button @click="setTimerPreset(60)"
+                :class="timerPreset === 60 ? 'bg-purple-500 text-white' : 'bg-white/50 text-purple-700'"
+                class="px-3 py-1 rounded text-sm font-medium" :disabled="timerActive">60m</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex gap-3">
+          <button x-show="!timerActive || timerPaused" @click="startTimer()"
+            class="flex-1 py-3 rounded-lg bg-purple-600 text-white font-medium hover:bg-purple-700 transition-colors">
+            <span x-show="!timerActive">Start</span>
+            <span x-show="timerActive && timerPaused">Resume</span>
+          </button>
+          <button x-show="timerActive && !timerPaused" @click="pauseTimer()"
+            class="flex-1 py-3 rounded-lg bg-amber-500 text-white font-medium hover:bg-amber-600 transition-colors">Pause</button>
+          <button x-show="timerActive" @click="resetTimer()"
+            class="px-6 py-3 rounded-lg bg-zinc-200 text-zinc-700 font-medium hover:bg-zinc-300 transition-colors">Reset</button>
+        </div>
+
+        <!-- Stats -->
+        <div class="mt-6 text-center text-sm text-purple-600">
+          <p>Total focus time: <span class="font-bold" x-text="stats.focus_minutes || 0"></span> minutes</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Habit Note Modal -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      x-show="noteModal.open" x-cloak x-transition.opacity>
+      <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl transform transition-all"
+        @click.away="noteModal.open = false">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold">Daily Note</h3>
+          <button @click="noteModal.open = false" class="text-zinc-400 hover:text-zinc-600">✕</button>
+        </div>
+
+        <div class="mb-4">
+          <div class="text-sm text-zinc-600 mb-2">
+            <span class="font-medium" x-text="noteModal.habitTitle"></span>
+            <span class="mx-2">•</span>
+            <span
+              x-text="new Date(noteModal.date).toLocaleDateString(undefined, {weekday:'long', month:'short', day:'numeric'})"></span>
+          </div>
+          <textarea x-model="noteModal.note" rows="6" class="w-full border border-zinc-200 rounded px-3 py-2 text-sm"
+            placeholder="How did it go? Any insights or challenges?"></textarea>
+        </div>
+
+        <button @click="saveNote()"
+          class="w-full py-2.5 rounded bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-800 transition-colors shadow-lg shadow-zinc-900/20">Save
+          Note</button>
+      </div>
+    </div>
+
+    <!-- Coach Modal -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" x-show="showCoach"
+      x-cloak x-transition.opacity>
+      <div class="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl transform transition-all relative"
+        @click.away="showCoach = false">
+        <button @click="showCoach = false" class="absolute top-4 right-4 text-zinc-400 hover:text-zinc-600">✕</button>
+        <div class="flex items-center gap-3 mb-4">
+          <div class="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-xl">🤖</div>
+          <div>
+            <h3 class="font-semibold text-lg">AI Coach</h3>
+            <div class="text-xs text-zinc-500">Your personal habit assistant</div>
+          </div>
+        </div>
+        <div class="bg-zinc-50 p-4 rounded-lg border border-zinc-100 text-zinc-700 text-sm leading-relaxed mb-4">
+          <span x-text="coachMessage || 'Analyzing your progress...'"></span>
+        </div>
+        <button @click="refreshCoach()"
+          class="w-full py-2 rounded border border-zinc-200 hover:bg-zinc-50 text-sm text-zinc-600">Refresh
+          Advice</button>
+      </div>
+    </div>
+
+    <!-- HABITS VIEW -->
+    <section x-show="view === 'habits'" x-transition:enter="transition ease-out duration-300"
+      x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+
+      <!-- Week Navigation -->
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-lg font-semibold text-zinc-800" x-text="weekTitle()"></div>
         <div class="flex items-center gap-2">
-          <button @click="prevWeek()" class="px-2 py-1 rounded border border-zinc-200 hover:bg-zinc-100">←</button>
-          <button @click="resetWeek()" class="px-2 py-1 rounded border border-zinc-200 hover:bg-zinc-100">Today</button>
-          <button @click="nextWeek()" class="px-2 py-1 rounded border border-zinc-200 hover:bg-zinc-100">→</button>
+          <button @click="prevWeek()" class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">←
+            Previous</button>
+          <button @click="resetWeek()"
+            class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">Today</button>
+          <button @click="nextWeek()" class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">Next
+            →</button>
         </div>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div class="lg:col-span-2 overflow-auto border border-zinc-200 rounded bg-white">
-          <table class="min-w-full text-sm">
-          <thead class="bg-zinc-50">
-            <tr>
-              <th class="text-left font-medium text-zinc-600 px-4 py-2 w-64">Habit</th>
-              <template x-for="d in weekDates">
-                <th class="text-center font-medium text-zinc-600 px-2 py-2">
-                  <div x-text="new Date(d).toLocaleDateString(undefined,{weekday:'short'})"></div>
-                  <div class="text-[10px] text-zinc-400" x-text="new Date(d).getDate()"></div>
-                </th>
-              </template>
-              <th class="px-4 py-2 w-24 text-right font-medium text-zinc-600">Streak</th>
-              <th class="px-4 py-2 w-20"></th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="h in habits" :key="h.id">
-              <tr class="border-t border-zinc-100">
-                <td class="px-4 py-3">
-                  <div class="font-medium" x-text="h.title"></div>
-                  <div class="text-xs text-zinc-500" x-text="h.frequency==='daily' ? 'Daily' : 'Weekly'"></div>
-                </td>
-                <template x-for="d in weekDates">
-                  <td class="px-2 py-2 text-center">
-                    <button @click="toggleMark(h.id, d)"
-                            :class="isMarked(h.id,d) ? 'bg-zinc-900 text-white' : 'bg-transparent text-zinc-300 border border-zinc-200'"
-                            class="h-6 w-6 rounded-sm inline-flex items-center justify-center text-xs"
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Main Habit Tracker -->
+        <div class="lg:col-span-2 overflow-hidden border border-zinc-200 rounded-xl bg-white shadow-sm">
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead class="bg-zinc-50 border-b border-zinc-200">
+                <tr>
+                  <th class="text-left font-medium text-zinc-600 px-4 py-3 w-64 sticky left-0 bg-zinc-50 z-10">Habit
+                  </th>
+                  <template x-for="d in weekDates">
+                    <th class="text-center font-medium text-zinc-600 px-2 py-3"
+                      :class="isToday(d) ? 'bg-blue-50/50' : ''">
+                      <div x-text="new Date(d).toLocaleDateString(undefined,{weekday:'short'})"
+                        class="text-xs uppercase tracking-wide"></div>
+                      <div class="text-lg font-light text-zinc-900" x-text="new Date(d).getDate()"></div>
+                    </th>
+                  </template>
+                  <th class="px-4 py-3 w-24 text-center font-medium text-zinc-600">Streak</th>
+                  <th class="px-4 py-3 w-16"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-zinc-100">
+                <template x-for="h in habits" :key="h.id">
+                  <tr class="group hover:bg-zinc-50/50 transition-colors">
+                    <td class="px-4 py-4 sticky left-0 bg-white group-hover:bg-zinc-50/50 z-10">
+                      <div class="flex items-center gap-3">
+                        <div class="h-8 w-8 rounded-full flex items-center justify-center text-lg bg-zinc-100 shrink-0"
+                          x-text="h.icon || '📝'"></div>
+                        <div class="min-w-0">
+                          <div class="font-medium text-zinc-900 truncate" x-text="h.title"></div>
+                          <div class="text-xs text-zinc-500 flex items-center gap-2">
+                            <span class="flex items-center gap-1">
+                              <span class="inline-block w-2 h-2 rounded-full"
+                                :style="`background-color: ${h.color || '#000000'}`"></span>
+                              <span x-text="h.frequency==='daily' ? 'Daily' : 'Weekly'"></span>
+                            </span>
+                            <span x-show="h.notification_time" class="text-zinc-400 flex items-center gap-0.5"
+                              title="Notification set">
+                              <span>🔔</span> <span x-text="h.notification_time"></span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <template x-for="d in weekDates">
+                      <td class="px-2 py-2 text-center" :class="isToday(d) ? 'bg-blue-50/30' : ''">
+                        <div class="flex items-center justify-center gap-1">
+                          <button @click="toggleMark(h.id, d)"
+                            :style="isMarked(h.id,d) ? `background-color: ${h.color || '#000000'}; border-color: ${h.color || '#000000'}; color: white` : ''"
+                            :class="isMarked(h.id,d) ? '' : 'bg-transparent text-zinc-300 border border-zinc-200 hover:border-zinc-300'"
+                            class="h-8 w-8 rounded-lg inline-flex items-center justify-center text-sm transition-all transform active:scale-95"
                             title="Toggle">
-                      ✓
-                    </button>
-                  </td>
+                            <span x-show="isMarked(h.id,d)">✓</span>
+                          </button>
+                          <button x-show="isMarked(h.id,d)" @click="openNoteModal(h.id, d)"
+                            class="text-zinc-400 hover:text-zinc-700 transition-colors" title="Add note">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                              stroke-linejoin="round">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                              <polyline points="14 2 14 8 20 8"></polyline>
+                              <line x1="16" y1="13" x2="8" y2="13"></line>
+                              <line x1="16" y1="17" x2="8" y2="17"></line>
+                              <polyline points="10 9 9 9 8 9"></polyline>
+                            </svg>
+                          </button>
+                        </div>
+                      </td>
+                    </template>
+                    <td class="px-4 py-3 text-center">
+                      <div
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-orange-50 text-orange-600 text-xs font-medium border border-orange-100"
+                        x-show="h.streak > 0">
+                        <span>🔥</span>
+                        <span x-text="h.streak"></span>
+                      </div>
+                      <div x-show="!h.streak" class="text-zinc-300">-</div>
+                    </td>
+                    <td class="px-4 py-3 text-right">
+                      <div
+                        class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button class="text-zinc-400 hover:text-zinc-700 transition-colors" @click="openHabitModal(h)"
+                          title="Edit">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                          </svg>
+                        </button>
+                        <button class="text-zinc-400 hover:text-red-500 transition-colors"
+                          @click="confirmAction('Delete this habit?', () => removeHabit(h.id))" title="Delete">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 6h18" />
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                          </svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 </template>
-                <td class="px-4 py-3 text-right text-zinc-700" x-text="h.streak || 0"></td>
-                <td class="px-4 py-3 text-right"><button class="hover:underline text-zinc-500" @click="removeHabit(h.id)">Delete</button></td>
-              </tr>
-            </template>
-          </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+          <div x-show="!habits.length" class="p-12 text-center text-zinc-500 bg-zinc-50/50">
+            <div class="text-4xl mb-2">🌱</div>
+            <p>No habits yet. Start your journey today!</p>
+          </div>
         </div>
 
-        <div class="lg:col-span-1">
-          <div class="rounded-xl border border-zinc-200 bg-white p-4">
-            <div class="flex items-center justify-between mb-2">
-              <div class="font-medium text-zinc-800">Progress board</div>
+        <!-- Sidebar -->
+        <div class="lg:col-span-1 space-y-6">
+
+          <!-- Progress Board -->
+          <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between mb-4">
+              <div class="font-semibold text-zinc-800">Weekly Progress</div>
               <div class="text-xs text-zinc-500" x-text="weekTitle()"></div>
             </div>
-            <div class="space-y-3" x-show="habits.length">
+
+            <div class="space-y-4" x-show="habits.length">
               <template x-for="h in habits" :key="'pb-'+h.id">
                 <div>
-                  <div class="flex items-center justify-between mb-1">
-                    <div class="text-sm text-zinc-700 truncate" x-text="h.title"></div>
-                    <div class="text-xs text-zinc-500 tabular-nums" x-text="weekProgress(h).percentLabel"></div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="text-sm font-medium text-zinc-700 truncate flex items-center gap-2">
+                      <span x-text="h.icon || '📝'"></span>
+                      <span x-text="h.title"></span>
+                    </div>
+                    <div class="text-xs font-medium text-zinc-500 tabular-nums" x-text="weekProgress(h).percentLabel">
+                    </div>
                   </div>
-                  <div class="h-2 w-full rounded bg-zinc-100 overflow-hidden">
-                    <div class="h-full rounded bg-zinc-900 transition-all"
-                         :style="`width: ${weekProgress(h).percent}%`"></div>
+                  <div class="h-2.5 w-full rounded-full bg-zinc-100 overflow-hidden">
+                    <div class="h-full rounded-full transition-all duration-500"
+                      :style="`width: ${weekProgress(h).percent}%; background-color: ${h.color || '#000000'}`"></div>
                   </div>
-                  <div class="mt-1 text-[11px] text-zinc-500" x-text="weekProgress(h).summary"></div>
                 </div>
               </template>
             </div>
-            <div class="text-sm text-zinc-500" x-show="!habits.length">No habits yet.</div>
+            <div class="text-sm text-zinc-500" x-show="!habits.length">No data yet.</div>
           </div>
+
+          <!-- Badges -->
+          <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <div class="font-semibold text-zinc-800 mb-4">Badges</div>
+            <div class="grid grid-cols-4 gap-2">
+              <template x-for="badge in badges" :key="badge.id">
+                <div
+                  class="flex flex-col items-center justify-center p-2 rounded bg-zinc-50 border border-zinc-100 hover:bg-zinc-100 transition-colors cursor-help group relative">
+                  <div class="text-2xl mb-1" x-text="badge.icon"></div>
+                  <div class="text-[10px] text-center leading-tight text-zinc-600 truncate w-full" x-text="badge.name">
+                  </div>
+
+                  <!-- Tooltip -->
+                  <div
+                    class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-32 p-2 bg-zinc-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
+                    <div class="font-bold mb-0.5" x-text="badge.name"></div>
+                    <div class="text-zinc-300" x-text="badge.description"></div>
+                  </div>
+                </div>
+              </template>
+              <div x-show="!badges.length" class="col-span-4 text-center text-xs text-zinc-400 py-2">No badges earned
+                yet. Keep going!</div>
+            </div>
+          </div>
+
+          <!-- Analytics Graph -->
+          <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <div class="font-semibold text-zinc-800 mb-4">Trend Analysis</div>
+            <canvas id="trendChart" width="400" height="250"></canvas>
+          </div>
+
+          <!-- Month Calendar -->
+          <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+            <div class="flex items-center justify-between mb-4">
+              <div class="font-semibold text-zinc-800" x-text="calendarTitle()"></div>
+              <div class="flex gap-1">
+                <button @click="prevMonth()" class="p-1 hover:bg-zinc-100 rounded">←</button>
+                <button @click="nextMonth()" class="p-1 hover:bg-zinc-100 rounded">→</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-7 gap-1 text-center text-xs text-zinc-500 mb-2">
+              <div>M</div>
+              <div>T</div>
+              <div>W</div>
+              <div>T</div>
+              <div>F</div>
+              <div>S</div>
+              <div>S</div>
+            </div>
+            <div class="grid grid-cols-7 gap-1">
+              <template x-for="d in calendar.days">
+                <div class="h-8 flex items-center justify-center rounded-full text-xs relative group cursor-default"
+                  :class="!d ? '' : (isToday(d) ? 'bg-zinc-900 text-white font-bold' : 'text-zinc-700 hover:bg-zinc-50')">
+                  <span x-text="d ? new Date(d).getDate() : ''"></span>
+                  <div x-show="d && hasActivity(d)" class="absolute bottom-1 w-1 h-1 rounded-full bg-green-500"></div>
+
+                  <!-- Calendar Tooltip -->
+                  <div x-show="d"
+                    class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-zinc-800 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20">
+                    <span
+                      x-text="d ? new Date(d).toLocaleDateString(undefined, {weekday:'long', month:'short', day:'numeric'}) : ''"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ROUTINES VIEW -->
+    <section x-show="view === 'routines'" x-cloak x-transition:enter="transition ease-out duration-300"
+      x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0">
+
+      <!-- Global Date Navigation for Routines -->
+      <div class="flex items-center justify-between mb-6">
+        <div class="text-lg font-semibold text-zinc-800">Daily Routines</div>
+        <div class="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg p-1">
+          <button @click="changeRoutineDate(-1)" class="px-3 py-1.5 hover:bg-zinc-50 rounded text-sm">←
+            Previous</button>
+          <div class="px-3 py-1.5 text-sm font-medium min-w-[120px] text-center border-x border-zinc-100"
+            x-text="routineDateLabel()"></div>
+          <button @click="changeRoutineDate(1)" class="px-3 py-1.5 hover:bg-zinc-50 rounded text-sm">Next →</button>
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="rounded-xl bg-zinc-900 text-white p-5">
-          <div class="flex items-center justify-between mb-3">
-            <div class="font-semibold">☀️ morning routine</div>
-            <button @click="addRoutine('morning')" class="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20">Add</button>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Routines Lists -->
+        <div class="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- Morning Routine -->
+          <div class="rounded-xl bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-100 p-6 shadow-sm">
+            <div class="flex items-center justify-between mb-4">
+              <div class="font-semibold text-orange-900 flex items-center gap-2">
+                <span class="text-xl">☀️</span> Morning Routine
+              </div>
+              <button @click="openRoutineModal('morning')"
+                class="text-xs px-2 py-1 rounded bg-white/50 hover:bg-white text-orange-800 border border-orange-200 transition-colors">+
+                Add</button>
+            </div>
+
+            <div class="mb-6">
+              <div class="flex items-center justify-between mb-1">
+                <div class="text-xs font-medium text-orange-800">Progress</div>
+                <div class="text-xs font-bold text-orange-800" x-text="routineProgressPercent('morning') + '%'"></div>
+              </div>
+              <div class="h-2 w-full rounded-full bg-orange-200/50 overflow-hidden">
+                <div class="h-full rounded-full bg-orange-500 transition-all duration-500"
+                  :style="`width: ${routineProgressPercent('morning')}%`"></div>
+              </div>
+            </div>
+
+            <ul class="space-y-2 text-sm">
+              <template x-for="item in morningRoutine" :key="item.id">
+                <li
+                  class="flex items-center justify-between gap-2 group bg-white/60 p-3 rounded-lg border border-orange-100/50 hover:border-orange-200 transition-all hover:shadow-sm">
+                  <div class="flex items-center gap-3 cursor-pointer flex-1" @click="toggleRoutine(item.id)">
+                    <div
+                      class="h-5 w-5 rounded border border-orange-300 flex items-center justify-center transition-colors bg-white"
+                      :class="isRoutineDone(item.id) ? '!bg-orange-500 !border-orange-500' : ''">
+                      <span x-show="isRoutineDone(item.id)" class="text-white text-xs font-bold">✓</span>
+                    </div>
+                    <span x-text="item.text" class="text-orange-900 font-medium"
+                      :class="isRoutineDone(item.id) ? 'line-through opacity-50' : ''"></span>
+                  </div>
+                  <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button @click="openRoutineModal('morning', item)"
+                      class="p-1 text-orange-400 hover:text-orange-700 hover:bg-orange-100 rounded" title="Edit">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                      </svg>
+                    </button>
+                    <button @click="confirmAction('Delete routine item?', () => removeRoutine(item))"
+                      class="p-1 text-orange-400 hover:text-orange-700 hover:bg-orange-100 rounded" title="Delete">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 6h18" />
+                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                      </svg>
+                    </button>
+                  </div>
+                </li>
+              </template>
+              <li x-show="!morningRoutine.length" class="text-xs text-orange-400 text-center py-2">No items yet.</li>
+            </ul>
           </div>
-          <ul class="space-y-2 text-sm">
-            <template x-for="item in morningRoutine" :key="item.id">
-              <li class="flex items-center justify-between gap-2">
-                <div class="flex items-start gap-2">
-                  <span class="mt-1.5 h-1.5 w-1.5 rounded-full bg-white/60 inline-block"></span>
-                  <span x-text="item.text"></span>
-                </div>
-                <div class="flex items-center gap-2 opacity-80">
-                  <button @click="editRoutine(item)" class="text-[11px] hover:underline">Edit</button>
-                  <button @click="removeRoutine(item)" class="text-[11px] hover:underline">Delete</button>
-                </div>
-              </li>
-            </template>
-          </ul>
-        </div>
-        <div class="rounded-xl bg-zinc-900 text-white p-5">
-          <div class="flex items-center justify-between mb-3">
-            <div class="font-semibold">🌙 night routine</div>
-            <button @click="addRoutine('night')" class="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/20">Add</button>
+
+          <!-- Night Routine -->
+          <div class="rounded-xl bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100 p-6 shadow-sm">
+            <div class="flex items-center justify-between mb-4">
+              <div class="font-semibold text-indigo-900 flex items-center gap-2">
+                <span class="text-xl">🌙</span> Night Routine
+              </div>
+              <button @click="openRoutineModal('night')"
+                class="text-xs px-2 py-1 rounded bg-white/50 hover:bg-white text-indigo-800 border border-indigo-200 transition-colors">+
+                Add</button>
+            </div>
+
+            <div class="mb-6">
+              <div class="flex items-center justify-between mb-1">
+                <div class="text-xs font-medium text-indigo-800">Progress</div>
+                <div class="text-xs font-bold text-indigo-800" x-text="routineProgressPercent('night') + '%'"></div>
+              </div>
+              <div class="h-2 w-full rounded-full bg-indigo-200/50 overflow-hidden">
+                <div class="h-full rounded-full bg-indigo-500 transition-all duration-500"
+                  :style="`width: ${routineProgressPercent('night')}%`"></div>
+              </div>
+            </div>
+
+            <ul class="space-y-2 text-sm">
+              <template x-for="item in nightRoutine" :key="item.id">
+                <li
+                  class="flex items-center justify-between gap-2 group bg-white/60 p-3 rounded-lg border border-indigo-100/50 hover:border-indigo-200 transition-all hover:shadow-sm">
+                  <div class="flex items-center gap-3 cursor-pointer flex-1" @click="toggleRoutine(item.id)">
+                    <div
+                      class="h-5 w-5 rounded border border-indigo-300 flex items-center justify-center transition-colors bg-white"
+                      :class="isRoutineDone(item.id) ? '!bg-indigo-500 !border-indigo-500' : ''">
+                      <span x-show="isRoutineDone(item.id)" class="text-white text-xs font-bold">✓</span>
+                    </div>
+                    <span x-text="item.text" class="text-indigo-900 font-medium"
+                      :class="isRoutineDone(item.id) ? 'line-through opacity-50' : ''"></span>
+                  </div>
+                  <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button @click="openRoutineModal('night', item)"
+                      class="p-1 text-indigo-400 hover:text-indigo-700 hover:bg-indigo-100 rounded" title="Edit">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                      </svg>
+                    </button>
+                    <button @click="confirmAction('Delete routine item?', () => removeRoutine(item))"
+                      class="p-1 text-indigo-400 hover:text-indigo-700 hover:bg-indigo-100 rounded" title="Delete">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 6h18" />
+                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                      </svg>
+                    </button>
+                  </div>
+                </li>
+              </template>
+              <li x-show="!nightRoutine.length" class="text-xs text-indigo-400 text-center py-2">No items yet.</li>
+            </ul>
           </div>
-          <ul class="space-y-2 text-sm">
-            <template x-for="item in nightRoutine" :key="item.id">
-              <li class="flex items-center justify-between gap-2">
-                <div class="flex items-start gap-2">
-                  <span class="mt-1.5 h-1.5 w-1.5 rounded-full bg-white/60 inline-block"></span>
-                  <span x-text="item.text"></span>
-                </div>
-                <div class="flex items-center gap-2 opacity-80">
-                  <button @click="editRoutine(item)" class="text-[11px] hover:underline">Edit</button>
-                  <button @click="removeRoutine(item)" class="text-[11px] hover:underline">Delete</button>
-                </div>
-              </li>
-            </template>
-          </ul>
         </div>
-        <div class="rounded-xl overflow-hidden">
-          <div class="relative">
-            <img :src="routineImage" alt="routine" class="w-full h-full object-cover"/>
-            <div class="absolute top-2 right-2">
-              <input type="file" id="routineInput" class="hidden" @change="async ($event) => { const f = $event.target.files[0]; await changeRoutineImage(f); $event.target.value=''; }">
-              <label for="routineInput" class="text-xs px-2 py-1 rounded bg-white/80 hover:bg-white cursor-pointer">Change photo</label>
+
+        <!-- Routine Graph -->
+        <div class="lg:col-span-1">
+          <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm sticky top-6">
+            <div class="font-semibold text-zinc-800 mb-4">Routine Consistency</div>
+            <canvas id="routineChart" width="400" height="300"></canvas>
+            <div class="mt-4 text-xs text-zinc-500 text-center">
+              Consistency over the last 30 days
             </div>
           </div>
         </div>
       </div>
     </section>
+
   </div>
 
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
   <script src="./assets/js/app.js"></script>
 </body>
-</html> 
+
+</html>
