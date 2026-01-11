@@ -1,11 +1,36 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const bcrypt = require('bcryptjs');
 
 const dbPath = path.resolve(__dirname, '../database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
 function initDatabase() {
   db.serialize(() => {
+    // Users
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user', -- 'admin' or 'user'
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`, (err) => {
+      if (!err) {
+        // Seed Admin
+        db.get("SELECT COUNT(*) as count FROM users", (err, row) => {
+          if (!err && row.count === 0) {
+            const hash = bcrypt.hashSync('admin123', 10);
+            db.run("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", ['admin', hash, 'admin']);
+            console.log("Seeded admin user.");
+          }
+        });
+      }
+    });
+
+    // Migration for password recovery
+    db.run(`ALTER TABLE users ADD COLUMN recovery_question TEXT`, (err) => { });
+    db.run(`ALTER TABLE users ADD COLUMN recovery_answer TEXT`, (err) => { });
+
     // Categories
     db.run(`CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -13,7 +38,7 @@ function initDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Tasks (Deprecated but kept for schema consistency if needed, or we can drop)
+    // Tasks (Deprecated)
     db.run(`CREATE TABLE IF NOT EXISTS tasks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
@@ -33,9 +58,10 @@ function initDatabase() {
       FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
     )`);
 
-    // Habits - Updated with color, icon, notification
+    // Habits
     db.run(`CREATE TABLE IF NOT EXISTS habits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
       title TEXT NOT NULL,
       frequency TEXT NOT NULL DEFAULT 'daily',
       streak INTEGER NOT NULL DEFAULT 0,
@@ -44,21 +70,22 @@ function initDatabase() {
       icon TEXT DEFAULT '📝',
       notification_time TEXT,
       notification_enabled INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )`, (err) => {
       if (!err) {
-        // Migration: Check for new columns and add them if missing
+        // Migration: Add columns if missing
         const columnsToAdd = [
           { name: 'color', type: "TEXT DEFAULT '#000000'" },
           { name: 'icon', type: "TEXT DEFAULT '📝'" },
           { name: 'notification_time', type: "TEXT" },
-          { name: 'notification_enabled', type: "INTEGER DEFAULT 0" }
+          { name: 'notification_enabled', type: "INTEGER DEFAULT 0" },
+          { name: 'user_id', type: "INTEGER DEFAULT 1" }, // Default to admin for migration
+          { name: 'sort', type: "INTEGER DEFAULT 0" }
         ];
 
         columnsToAdd.forEach(col => {
-          db.run(`ALTER TABLE habits ADD COLUMN ${col.name} ${col.type}`, (err) => {
-            // Ignore error if column already exists (SQLite doesn't have IF NOT EXISTS for ADD COLUMN)
-          });
+          db.run(`ALTER TABLE habits ADD COLUMN ${col.name} ${col.type}`, (err) => { });
         });
       }
     });
@@ -74,12 +101,11 @@ function initDatabase() {
       FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
     )`, (err) => {
       if (!err) {
-        // Migration: Add note column if missing
         db.run(`ALTER TABLE habit_logs ADD COLUMN note TEXT`, (err) => { });
       }
     });
 
-    // Routines
+    // Routines (Global Templates)
     db.run(`CREATE TABLE IF NOT EXISTS routines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       kind TEXT NOT NULL,
@@ -88,32 +114,35 @@ function initDatabase() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Routine Logs
+    // Routine Logs (User Progress)
     db.run(`CREATE TABLE IF NOT EXISTS routine_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
       routine_id INTEGER NOT NULL,
       log_date TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(routine_id, log_date),
-      FOREIGN KEY (routine_id) REFERENCES routines(id) ON DELETE CASCADE
-    )`);
+      FOREIGN KEY (routine_id) REFERENCES routines(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`, (err) => {
+      if (!err) {
+        db.run(`ALTER TABLE routine_logs ADD COLUMN user_id INTEGER DEFAULT 1`, (err) => { });
+        // We can add a unique index but let's strictly handle duplicates in code to avoid complex migration of existing index
+      }
+    });
 
-    // User Stats (Gamification)
+    // User Stats
     db.run(`CREATE TABLE IF NOT EXISTS user_stats (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER UNIQUE,
       points INTEGER DEFAULT 0,
       level INTEGER DEFAULT 1,
       xp INTEGER DEFAULT 0,
-      focus_minutes INTEGER DEFAULT 0
-    )`);
-
-    // Initialize user stats if empty
-    db.get("SELECT COUNT(*) as count FROM user_stats", (err, row) => {
-      if (!err && row.count === 0) {
-        db.run("INSERT INTO user_stats (points, level, xp, focus_minutes) VALUES (0, 1, 0, 0)");
-      } else {
-        // Migration for focus_minutes
+      focus_minutes INTEGER DEFAULT 0,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`, (err) => {
+      if (!err) {
         db.run("ALTER TABLE user_stats ADD COLUMN focus_minutes INTEGER DEFAULT 0", (err) => { });
+        db.run("ALTER TABLE user_stats ADD COLUMN user_id INTEGER DEFAULT 1", (err) => { });
       }
     });
 
@@ -130,10 +159,16 @@ function initDatabase() {
     // User Badges
     db.run(`CREATE TABLE IF NOT EXISTS user_badges(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id INTEGER,
               badge_id INTEGER NOT NULL,
               earned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-              FOREIGN KEY(badge_id) REFERENCES badges(id) ON DELETE CASCADE
-            )`);
+              FOREIGN KEY(badge_id) REFERENCES badges(id) ON DELETE CASCADE,
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )`, (err) => {
+      if (!err) {
+        db.run(`ALTER TABLE user_badges ADD COLUMN user_id INTEGER DEFAULT 1`, (err) => { });
+      }
+    });
 
     // Seed Badges
     db.get("SELECT COUNT(*) as count FROM badges", (err, row) => {

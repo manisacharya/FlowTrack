@@ -41,7 +41,7 @@
             window.location.reload();
           }
         ">
-        <label for="coverInput"
+        <label for="coverInput" x-show="role === 'admin'"
           class="text-xs px-2 py-1 rounded bg-white/70 hover:bg-white cursor-pointer transition-colors">Change
           cover</label>
       </div>
@@ -62,33 +62,67 @@
     </div>
 
     <!-- Header & Nav -->
-    <header class="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-      <div class="flex items-center gap-4">
-        <h1 class="text-2xl font-semibold flex items-center gap-2">
-          FlowTrack <span
-            class="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 border border-yellow-200"
-            x-show="stats.level > 1">Pro</span>
+    <header class="flex items-center justify-between mb-8 pb-4 border-b border-zinc-200">
+      <div class="flex items-center gap-8">
+        <h1 class="text-xl font-bold flex items-center gap-2 text-zinc-900">
+          ⚡️ FlowTrack
         </h1>
-        <nav class="flex bg-zinc-200/50 p-1 rounded-lg">
-          <button @click="switchView('habits')" class="px-3 py-1 text-sm rounded-md transition-all"
-            :class="view==='habits' ? 'bg-white shadow-sm text-zinc-900 font-medium' : 'text-zinc-500 hover:text-zinc-700'">Habits</button>
-          <button @click="switchView('routines')" class="px-3 py-1 text-sm rounded-md transition-all"
-            :class="view==='routines' ? 'bg-white shadow-sm text-zinc-900 font-medium' : 'text-zinc-500 hover:text-zinc-700'">Routines</button>
+
+        <nav class="hidden md:flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
+          <template x-if="role !== 'admin'">
+            <div class="flex items-center gap-1">
+              <button @click="switchView('habits')" class="px-4 py-1.5 text-sm rounded-md transition-all"
+                :class="view==='habits' ? 'bg-white shadow-sm text-zinc-900 font-semibold' : 'text-zinc-500 hover:text-zinc-800'">
+                Habits
+              </button>
+              <button @click="switchView('routines')" class="px-4 py-1.5 text-sm rounded-md transition-all"
+                :class="view==='routines' ? 'bg-white shadow-sm text-zinc-900 font-semibold' : 'text-zinc-500 hover:text-zinc-800'">
+                Routines
+              </button>
+            </div>
+          </template>
+
+          <template x-if="role === 'admin'">
+            <button @click="switchView('admin'); loadUsers()" class="px-4 py-1.5 text-sm rounded-md transition-all"
+              :class="view==='admin' ? 'bg-white shadow-sm text-zinc-900 font-semibold' : 'text-zinc-500 hover:text-zinc-800'">
+              Admin Dashboard
+            </button>
+          </template>
         </nav>
       </div>
-      <div class="flex items-center gap-3">
-        <button @click="openFlowMode()"
-          class="text-sm px-3 py-1.5 rounded bg-purple-50 text-purple-600 hover:bg-purple-100 font-medium flex items-center gap-1"
-          title="Focus Timer"><span>⏱️</span> Flow Mode</button>
-        <button @click="showCoach = true"
-          class="text-sm px-3 py-1.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium flex items-center gap-1"><span>🤖</span>
-          Coach</button>
-        <button x-show="view==='habits'" @click="openHabitModal()"
-          class="px-3 py-1.5 rounded bg-zinc-900 text-white text-sm hover:bg-zinc-800 transition-colors shadow-sm">+ New
-          Habit</button>
-        <button x-show="view==='routines'" @click="openRoutineModal()"
-          class="px-3 py-1.5 rounded bg-zinc-900 text-white text-sm hover:bg-zinc-800 transition-colors shadow-sm">+ New
-          Routine</button>
+
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2" x-show="role !== 'admin'">
+          <button @click="openFlowMode()" class="p-2 rounded-full hover:bg-zinc-100 text-zinc-600 transition-colors"
+            title="Focus Timer">⏱️</button>
+          <button @click="showCoach = true" class="p-2 rounded-full hover:bg-zinc-100 text-zinc-600 transition-colors"
+            title="AI Coach">🤖</button>
+        </div>
+
+        <div class="h-6 w-px bg-zinc-200 mx-1"></div>
+
+        <div class="flex items-center gap-3">
+          <template x-if="view === 'habits' && role !== 'admin'">
+            <button @click="openHabitModal()"
+              class="px-4 py-1.5 rounded bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-800 transition-all shadow-sm">
+              + New Habit
+            </button>
+          </template>
+
+          <template x-if="view==='admin'">
+            <button @click="openUserModal()"
+              class="px-4 py-1.5 rounded bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-800 transition-all shadow-sm">
+              + Add User
+            </button>
+          </template>
+
+          <button @click="switchView('profile')"
+            class="flex items-center justify-center w-9 h-9 rounded-full bg-zinc-100 text-zinc-800 text-sm font-bold shadow-md hover:scale-105 transition-transform overflow-hidden border border-zinc-200"
+            title="Profile">
+            <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`" alt="avatar"
+              class="w-full h-full">
+          </button>
+        </div>
       </div>
     </header>
 
@@ -357,11 +391,13 @@
                   <th class="px-4 py-3 w-16"></th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-zinc-100">
-                <template x-for="h in habits" :key="h.id">
-                  <tr class="group hover:bg-zinc-50/50 transition-colors">
+              <tbody class="divide-y divide-zinc-100" id="habits-list">
+                <template x-for="(h, index) in habits" :key="h.id">
+                  <tr class="group hover:bg-zinc-50/50 transition-colors" :data-id="h.id">
                     <td class="px-4 py-4 sticky left-0 bg-white group-hover:bg-zinc-50/50 z-10">
-                      <div class="flex items-center gap-3">
+                      <div class="flex items-center gap-2">
+                        <!-- Drag Icon -->
+                        <div class="text-zinc-300 mr-2 select-none font-bold">⋮⋮</div>
                         <div class="h-8 w-8 rounded-full flex items-center justify-center text-lg bg-zinc-100 shrink-0"
                           x-text="h.icon || '📝'"></div>
                         <div class="min-w-0">
@@ -383,10 +419,13 @@
                     <template x-for="d in weekDates">
                       <td class="px-2 py-2 text-center" :class="isToday(d) ? 'bg-blue-50/30' : ''">
                         <div class="flex items-center justify-center gap-1">
-                          <button @click="toggleMark(h.id, d)"
+                          <button @click="toggleMark(h.id, d)" :disabled="isPastMonth(d)"
                             :style="isMarked(h.id,d) ? `background-color: ${h.color || '#000000'}; border-color: ${h.color || '#000000'}; color: white` : ''"
-                            :class="isMarked(h.id,d) ? '' : 'bg-transparent text-zinc-300 border border-zinc-200 hover:border-zinc-300'"
-                            class="h-8 w-8 rounded-lg inline-flex items-center justify-center text-sm transition-all transform active:scale-95"
+                            :class="[
+                              isMarked(h.id,d) ? '' : 'bg-transparent text-zinc-300 border border-zinc-200',
+                              isPastMonth(d) ? 'opacity-50 cursor-not-allowed' : 'hover:border-zinc-300 active:scale-95'
+                            ]"
+                            class="h-8 w-8 rounded-lg inline-flex items-center justify-center text-sm transition-all transform"
                             title="Toggle">
                             <span x-show="isMarked(h.id,d)">✓</span>
                           </button>
@@ -501,11 +540,6 @@
             </div>
           </div>
 
-          <!-- Analytics Graph -->
-          <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-            <div class="font-semibold text-zinc-800 mb-4">Trend Analysis</div>
-            <canvas id="trendChart" width="400" height="250"></canvas>
-          </div>
 
           <!-- Month Calendar -->
           <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
@@ -530,13 +564,19 @@
                 <div class="h-8 flex items-center justify-center rounded-full text-xs relative group cursor-default"
                   :class="!d ? '' : (isToday(d) ? 'bg-zinc-900 text-white font-bold' : 'text-zinc-700 hover:bg-zinc-50')">
                   <span x-text="d ? new Date(d).getDate() : ''"></span>
-                  <div x-show="d && hasActivity(d)" class="absolute bottom-1 w-1 h-1 rounded-full bg-green-500"></div>
+                  <!-- Activity Indicators -->
+                  <div class="absolute bottom-1 flex gap-0.5">
+                    <div x-show="d && hasActivity(d)" class="w-1 h-1 rounded-full bg-zinc-300"></div>
+                    <div x-show="d && isPerfectDay(d)" class="w-1 h-1 rounded-full bg-green-500"></div>
+                  </div>
 
                   <!-- Calendar Tooltip -->
                   <div x-show="d"
                     class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-zinc-800 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20">
-                    <span
-                      x-text="d ? new Date(d).toLocaleDateString(undefined, {weekday:'long', month:'short', day:'numeric'}) : ''"></span>
+                    <div
+                      x-text="new Date(d + 'T12:00:00').toLocaleDateString(undefined, {weekday:'long', month:'short', day:'numeric'})">
+                    </div>
+                    <div class="text-zinc-400" x-text="`${getCompletedCount(d)} habits completed`"></div>
                   </div>
                 </div>
               </template>
@@ -573,9 +613,6 @@
               <div class="font-semibold text-orange-900 flex items-center gap-2">
                 <span class="text-xl">☀️</span> Morning Routine
               </div>
-              <button @click="openRoutineModal('morning')"
-                class="text-xs px-2 py-1 rounded bg-white/50 hover:bg-white text-orange-800 border border-orange-200 transition-colors">+
-                Add</button>
             </div>
 
             <div class="mb-6">
@@ -602,24 +639,6 @@
                     <span x-text="item.text" class="text-orange-900 font-medium"
                       :class="isRoutineDone(item.id) ? 'line-through opacity-50' : ''"></span>
                   </div>
-                  <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button @click="openRoutineModal('morning', item)"
-                      class="p-1 text-orange-400 hover:text-orange-700 hover:bg-orange-100 rounded" title="Edit">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                      </svg>
-                    </button>
-                    <button @click="confirmAction('Delete routine item?', () => removeRoutine(item))"
-                      class="p-1 text-orange-400 hover:text-orange-700 hover:bg-orange-100 rounded" title="Delete">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M3 6h18" />
-                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                      </svg>
-                    </button>
-                  </div>
                 </li>
               </template>
               <li x-show="!morningRoutine.length" class="text-xs text-orange-400 text-center py-2">No items yet.</li>
@@ -628,13 +647,8 @@
 
           <!-- Night Routine -->
           <div class="rounded-xl bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100 p-6 shadow-sm">
-            <div class="flex items-center justify-between mb-4">
-              <div class="font-semibold text-indigo-900 flex items-center gap-2">
-                <span class="text-xl">🌙</span> Night Routine
-              </div>
-              <button @click="openRoutineModal('night')"
-                class="text-xs px-2 py-1 rounded bg-white/50 hover:bg-white text-indigo-800 border border-indigo-200 transition-colors">+
-                Add</button>
+            <div class="font-semibold text-indigo-900 flex items-center gap-2">
+              <span class="text-xl">🌙</span> Night Routine
             </div>
 
             <div class="mb-6">
@@ -661,24 +675,6 @@
                     <span x-text="item.text" class="text-indigo-900 font-medium"
                       :class="isRoutineDone(item.id) ? 'line-through opacity-50' : ''"></span>
                   </div>
-                  <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button @click="openRoutineModal('night', item)"
-                      class="p-1 text-indigo-400 hover:text-indigo-700 hover:bg-indigo-100 rounded" title="Edit">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                      </svg>
-                    </button>
-                    <button @click="confirmAction('Delete routine item?', () => removeRoutine(item))"
-                      class="p-1 text-indigo-400 hover:text-indigo-700 hover:bg-indigo-100 rounded" title="Delete">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M3 6h18" />
-                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                      </svg>
-                    </button>
-                  </div>
                 </li>
               </template>
               <li x-show="!nightRoutine.length" class="text-xs text-indigo-400 text-center py-2">No items yet.</li>
@@ -686,23 +682,385 @@
           </div>
         </div>
 
-        <!-- Routine Graph -->
-        <div class="lg:col-span-1">
+        <!-- Routine Graph (Visible to all, but only with user routines) -->
+        <div class="lg:col-span-1" x-show="role !== 'admin'">
           <div class="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm sticky top-6">
             <div class="font-semibold text-zinc-800 mb-4">Routine Consistency</div>
-            <canvas id="routineChart" width="400" height="300"></canvas>
-            <div class="mt-4 text-xs text-zinc-500 text-center">
-              Consistency over the last 30 days
+
+            <div class="space-y-4">
+              <!-- Morning Heatmap -->
+              <div>
+                <div class="flex items-center justify-between text-[10px] text-zinc-400 mb-1">
+                  <span>MORNING ROUTINE</span>
+                  <span>LAST 28 DAYS</span>
+                </div>
+                <div class="grid grid-cols-7 gap-1">
+                  <template x-for="date in last30Days">
+                    <div class="h-4 rounded-sm transition-all relative group"
+                      :class="getHeatMapColor(getRoutineIntensity(date, 'morning'), 'morning')" :title="date">
+                      <div
+                        class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-zinc-800 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-30">
+                        <div
+                          x-text="new Date(date + 'T12:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'})">
+                        </div>
+                        <div class="text-zinc-400"
+                          x-text="Math.round(getRoutineIntensity(date, 'morning') * 100) + '% completed'"></div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <!-- Night Heatmap -->
+            <div>
+              <div class="flex items-center justify-between text-[10px] text-zinc-400 mb-1">
+                <span>NIGHT ROUTINE</span>
+              </div>
+              <div class="grid grid-cols-7 gap-1">
+                <template x-for="date in last30Days">
+                  <div class="h-4 rounded-sm transition-all relative group"
+                    :class="getHeatMapColor(getRoutineIntensity(date, 'night'), 'night')" :title="date">
+                    <div
+                      class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-zinc-800 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-30">
+                      <div
+                        x-text="new Date(date + 'T12:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'})">
+                      </div>
+                      <div class="text-zinc-400"
+                        x-text="Math.round(getRoutineIntensity(date, 'night') * 100) + '% completed'"></div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4 flex items-center justify-center gap-4 text-[10px] text-zinc-400">
+            <div class="flex items-center gap-1">
+              <div class="w-2 h-2 rounded-sm bg-orange-500"></div> Morning
+            </div>
+            <div class="flex items-center gap-1">
+              <div class="w-2 h-2 rounded-sm bg-indigo-500"></div> Night
             </div>
           </div>
         </div>
       </div>
     </section>
 
+    <!-- ADMIN VIEW -->
+    <section x-show="view === 'admin'" x-cloak>
+      <div class="mb-6">
+        <h2 class="text-xl font-bold text-zinc-800">User Management</h2>
+        <p class="text-sm text-zinc-500">Manage registered users.</p>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm border border-zinc-200 overflow-hidden">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-zinc-50 border-b border-zinc-100 text-zinc-500 font-semibold">
+            <tr>
+              <th class="px-6 py-4">Username</th>
+              <th class="px-6 py-4">Level</th>
+              <th class="px-6 py-4">Role</th>
+              <th class="px-6 py-4">Joined</th>
+              <th class="px-6 py-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-zinc-100">
+            <!-- Skeleton/Loading State -->
+            <template x-if="usersLoading">
+              <template x-for="i in [1,2,3]">
+                <tr class="animate-pulse">
+                  <td class="px-6 py-4">
+                    <div class="h-4 bg-zinc-100 rounded w-24"></div>
+                  </td>
+                  <td class="px-6 py-4">
+                    <div class="h-4 bg-zinc-100 rounded w-12"></div>
+                  </td>
+                  <td class="px-6 py-4">
+                    <div class="h-8 bg-zinc-100 rounded w-32"></div>
+                  </td>
+                  <td class="px-6 py-4">
+                    <div class="h-4 bg-zinc-100 rounded w-20"></div>
+                  </td>
+                  <td class="px-6 py-4 text-right">
+                    <div class="h-4 bg-zinc-100 rounded w-16 ml-auto"></div>
+                  </td>
+                </tr>
+              </template>
+            </template>
+
+            <template x-if="!usersLoading">
+              <template x-for="u in users" :key="u.id">
+                <tr class="hover:bg-zinc-50/50 bg-white transition-colors">
+                  <td class="px-6 py-4 font-bold text-zinc-900 flex items-center gap-2">
+                    <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${u.username}`"
+                      class="w-7 h-7 rounded-full bg-zinc-50 border border-zinc-100">
+                    <span x-text="u.username"></span>
+                  </td>
+                  <td class="px-6 py-4">
+                    <span
+                      class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                      Lv <span x-text="u.level"></span>
+                    </span>
+                  </td>
+                  <td class="px-6 py-4">
+                    <select @change="updateUserRole(u.id, $event.target.value)"
+                      :disabled="u.username === 'admin' || u.username === username"
+                      class="bg-zinc-50 border border-zinc-200 text-zinc-700 text-xs rounded-lg focus:ring-zinc-500 focus:border-zinc-500 block w-32 p-1.5"
+                      :class="(u.username === 'admin' || u.username === username) ? 'opacity-50 cursor-not-allowed' : ''">
+                      <option value="user" :selected="u.role === 'user'">User</option>
+                      <option value="admin" :selected="u.role === 'admin'">Admin</option>
+                    </select>
+                  </td>
+                  <td class="px-6 py-4 text-zinc-500" x-text="new Date(u.created_at).toLocaleDateString()"></td>
+                  <td class="px-6 py-4 text-right">
+                    <button @click="removeUser(u.id)" x-show="u.username !== 'admin' && u.username !== username"
+                      class="text-red-500 hover:text-red-700 font-medium text-xs hover:underline decoration-red-200">
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              </template>
+            </template>
+
+            <tr x-show="!usersLoading && !users.length">
+              <td colspan="5" class="px-6 py-12 text-center text-zinc-400 italic">No users found.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="mt-12 mb-6">
+        <h2 class="text-xl font-bold text-zinc-800">Global Routine Management</h2>
+        <p class="text-sm text-zinc-500">Add or edit system-wide routines for all users.</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-white rounded-xl shadow-sm border border-zinc-200 p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-zinc-800">☀️ Morning Routine (Global)</h3>
+            <button @click="openRoutineModal('morning')"
+              class="text-xs px-2 py-1 rounded bg-zinc-900 text-white hover:bg-zinc-700">+ Add Item</button>
+          </div>
+          <ul class="space-y-2" id="morning-routine-list">
+            <template x-for="(item, index) in morningRoutine" :key="item.id">
+              <li class="flex items-center justify-between p-2 bg-zinc-50 rounded border border-zinc-100"
+                :data-id="item.id">
+                <div class="flex items-center gap-2">
+                  <div class="text-zinc-300 text-xs select-none">⋮⋮</div>
+                  <span x-text="item.text" class="text-sm text-zinc-700"></span>
+                </div>
+                <div class="flex gap-2 text-xs">
+                  <button @click="openRoutineModal('morning', item)"
+                    class="text-zinc-400 hover:text-zinc-700">✎</button>
+                  <button @click="confirmAction('Delete?', () => removeRoutine(item))"
+                    class="text-zinc-400 hover:text-red-600">×</button>
+                </div>
+              </li>
+            </template>
+            <div x-show="!morningRoutine.length" class="text-zinc-400 text-xs italic">No items.</div>
+          </ul>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border border-zinc-200 p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-zinc-800">🌙 Night Routine (Global)</h3>
+            <button @click="openRoutineModal('night')"
+              class="text-xs px-2 py-1 rounded bg-zinc-900 text-white hover:bg-zinc-700">+ Add Item</button>
+          </div>
+          <ul class="space-y-2" id="night-routine-list">
+            <template x-for="(item, index) in nightRoutine" :key="item.id">
+              <li class="flex items-center justify-between p-2 bg-zinc-50 rounded border border-zinc-100"
+                :data-id="item.id">
+                <div class="flex items-center gap-2">
+                  <div class="text-zinc-300 text-xs select-none">⋮⋮</div>
+                  <span x-text="item.text" class="text-sm text-zinc-700"></span>
+                </div>
+                <div class="flex gap-2 text-xs">
+                  <button @click="openRoutineModal('night', item)" class="text-zinc-400 hover:text-zinc-700">✎</button>
+                  <button @click="confirmAction('Delete?', () => removeRoutine(item))"
+                    class="text-zinc-400 hover:text-red-600">×</button>
+                </div>
+              </li>
+            </template>
+            <div x-show="!nightRoutine.length" class="text-zinc-400 text-xs italic">No items.</div>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROFILE VIEW -->
+    <section x-show="view === 'profile'" x-cloak class="max-w-xl mx-auto py-8">
+      <div class="bg-white rounded-xl shadow-sm border border-zinc-200 p-8 text-center relative">
+        <!-- Decorative background -->
+        <div class="absolute top-0 left-0 w-full h-32 bg-gradient-to-r from-zinc-800 to-zinc-900 rounded-t-xl"></div>
+
+        <!-- Sign Out Button - Top Right -->
+        <button @click="logout()"
+          class="absolute top-4 right-4 z-50 px-3 py-1.5 rounded-lg bg-white/20 text-white hover:bg-white/30 transition-all border border-white/30 flex items-center gap-2 text-xs font-semibold shadow-lg group"
+          title="Sign Out">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            class="group-hover:translate-x-0.5 transition-transform">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          Sign Out
+        </button>
+
+        <div
+          class="relative w-32 h-32 bg-white p-1 rounded-full mx-auto -mt-16 mb-4 shadow-2xl border-4 border-white overflow-hidden z-10">
+          <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`" alt="avatar"
+            class="w-full h-full rounded-full bg-zinc-50">
+        </div>
+
+        <div class="relative z-10">
+          <h2 class="text-2xl font-bold text-zinc-800 mb-1" x-text="username" style="padding-top:30px;"></h2>
+          <div class="inline-block px-3 py-1 bg-zinc-100 text-zinc-600 rounded-full text-xs font-medium mb-8"
+            x-text="role === 'admin' ? 'Administrator' : 'FlowTrack User'"></div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4 mb-8 text-left">
+          <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+            <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">Level</div>
+            <div class="text-2xl font-bold text-zinc-900" x-text="stats.level"></div>
+          </div>
+          <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+            <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">XP</div>
+            <div class="text-2xl font-bold text-indigo-600" x-text="stats.xp"></div>
+          </div>
+          <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+            <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">Points</div>
+            <div class="text-2xl font-bold text-amber-500" x-text="stats.points"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="bg-white rounded-xl p-6 border border-zinc-200 text-left mb-8 relative">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+            <span class="text-lg">🔐</span> Security Recovery
+          </h3>
+          <button @click="profileEditing = !profileEditing" class="text-zinc-400 hover:text-zinc-600 transition-colors">
+            <template x-if="!profileEditing">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </template>
+            <span x-show="profileEditing" class="text-[10px] font-bold uppercase">Cancel</span>
+          </button>
+        </div>
+
+        <!-- Read Only -->
+        <div x-show="!profileEditing" class="space-y-4">
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wider font-bold mb-1">Recovery Question</div>
+            <div class="text-sm text-zinc-800 font-medium" x-text="profileForm.recovery_question || 'Not set'"></div>
+          </div>
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wider font-bold mb-1">Secret Answer</div>
+            <div class="text-sm text-zinc-800 font-medium">••••••••</div>
+          </div>
+        </div>
+
+        <!-- Edit Mode -->
+        <div x-show="profileEditing" class="space-y-4" x-transition>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Recovery
+              Question</label>
+            <input type="text" x-model="profileForm.recovery_question"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">New Secret
+              Answer</label>
+            <input type="password" x-model="profileForm.recovery_answer"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50" />
+          </div>
+          <button @click="updateProfileSecurity(); profileEditing = false"
+            class="w-full py-2 bg-zinc-900 text-white rounded-lg text-sm font-bold hover:bg-zinc-800 transition-all shadow-sm">
+            Update Security Settings
+          </button>
+        </div>
+      </div>
+
+      <div class="mt-8 border-zinc-100 flex flex-col gap-3">
+        <button
+          @click="confirmAction('Reset everything? This will permanently delete your level, XP, all badges, and habit/routine history. This cannot be undone.', () => resetProgress())"
+          class="w-full py-2 text-xs text-red-400 hover:text-red-600 transition-colors font-medium underline decoration-red-100">
+          Reset All Progress & History
+        </button>
+      </div>
+    </section>
+
+    <!-- Add User Modal (Admin Only) -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      x-show="adminUserModal.open" x-cloak x-transition.opacity>
+      <div class="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl transform transition-all"
+        @click.away="adminUserModal.open = false">
+        <div class="text-center mb-6">
+          <div class="w-20 h-20 mx-auto rounded-full bg-zinc-50 border border-zinc-200 p-1 mb-3">
+            <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${adminUserForm.username || 'new'}`"
+              class="w-full h-full rounded-full">
+          </div>
+          <h3 class="text-lg font-bold text-zinc-900">Add New User</h3>
+        </div>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Username</label>
+            <input x-model="adminUserForm.username"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
+              placeholder="Enter username" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Initial
+              Password</label>
+            <input type="password" x-model="adminUserForm.password"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
+              placeholder="••••••••" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Role</label>
+            <select x-model="adminUserForm.role"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50">
+              <option value="user">Regular User</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Security
+              Question</label>
+            <input x-model="adminUserForm.recovery_question"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
+              placeholder="e.g. Favorite book?" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Security
+              Answer</label>
+            <input x-model="adminUserForm.recovery_answer"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
+              placeholder="Answer" />
+          </div>
+        </div>
+
+        <div class="mt-8 flex gap-3">
+          <button @click="adminUserModal.open = false"
+            class="flex-1 py-2 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 font-medium transition-colors">Cancel</button>
+          <button @click="adminCreateUser()"
+            class="flex-1 py-2 rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 font-medium shadow-sm transition-all focus:ring-2 focus:ring-offset-2 focus:ring-zinc-900">
+            Create User
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
+
 
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
   <script src="./assets/js/app.js"></script>
+
 </body>
 
 </html>

@@ -1,8 +1,13 @@
 function appState() {
   return {
     view: 'habits', // 'habits' | 'routines'
+    token: localStorage.getItem('token'),
+    role: localStorage.getItem('user_role') || 'user',
+    username: localStorage.getItem('username') || '',
+
     categories: [],
     habits: [],
+    users: [],
     logsMap: {},
     weekDates: [],
     weekStartYmd: '',
@@ -16,6 +21,15 @@ function appState() {
 
     routineForm: { id: null, kind: 'morning', text: '' },
     routineModal: { open: false, isEdit: false },
+
+    adminUserForm: { username: '', password: '', role: 'user', recovery_question: '', recovery_answer: '' },
+    adminUserModal: { open: false },
+    usersLoading: false,
+
+    profileForm: { recovery_question: '', recovery_answer: '' },
+    profileEditing: false,
+    analyticsData: { stats: [], morningTotal: 0, nightTotal: 0 },
+    last30Days: [],
 
     // UI State
     toasts: [],
@@ -41,7 +55,6 @@ function appState() {
     routineProgress: { completed: [] },
 
     // Analytics
-    trendChart: null,
     routineChart: null,
 
     // Calendar
@@ -50,7 +63,50 @@ function appState() {
     // Routine History
     routineDate: new Date().toISOString().slice(0, 10),
 
+    // Helper for Local YYYY-MM-DD
+    toLocalYMD(dateInput) {
+      const d = new Date(dateInput);
+      const offset = d.getTimezoneOffset();
+      const local = new Date(d.getTime() - (offset * 60 * 1000));
+      return local.toISOString().slice(0, 10);
+    },
+
+    // --- AUTHENTICATION HELPER ---
+    async authFetch(url, options = {}) {
+      if (!this.token) {
+        window.location.href = 'login.html';
+        return;
+      }
+
+      const headers = {
+        'Authorization': `Bearer ${this.token}`,
+        ...(options.headers || {})
+      };
+
+      const res = await fetch(url, { ...options, headers });
+      if (res.status === 401 || res.status === 403) {
+        this.logout();
+        return null;
+      }
+      return res;
+    },
+
+    logout() {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user_role');
+      localStorage.removeItem('username');
+      window.location.href = 'login.html';
+    },
+
     async init() {
+      if (!this.token) {
+        window.location.href = 'login.html';
+        return;
+      }
+
+      // Use local date for initial routine date to avoid timezone bugs on load
+      this.routineDate = this.toLocalYMD(new Date());
+
       await Promise.all([
         this.loadCategories(),
         this.loadHabits(),
@@ -58,34 +114,68 @@ function appState() {
         this.loadRoutines(),
         this.loadRoutineProgress(),
         this.loadCoach(),
-        this.loadCalendarActivity()
+        this.loadCalendarActivity(),
+        this.loadProfile()
       ]);
+      this.computeHeatMapRange();
       this.resetWeek();
       this.initNotifications();
       this.loadAnalytics();
       this.computeCalendar();
+
+      // Handle URL Routing
+      const hash = window.location.hash.slice(1);
+      const userViews = ['habits', 'routines', 'profile'];
+      const adminViews = ['admin', 'profile'];
+
+      if (this.role === 'admin') {
+        if (hash && adminViews.includes(hash)) {
+          this.switchView(hash);
+        } else {
+          this.switchView('admin');
+        }
+      } else {
+        if (hash && userViews.includes(hash)) {
+          this.switchView(hash);
+        } else {
+          this.switchView('habits');
+        }
+      }
+
+      window.addEventListener('hashchange', () => {
+        const h = window.location.hash.slice(1);
+        if (h && h !== this.view) {
+          this.switchView(h);
+        }
+      });
     },
 
     switchView(v) {
+      if (this.role === 'admin' && (v === 'habits' || v === 'routines')) return;
+      if (this.role !== 'admin' && v === 'admin') return;
       this.view = v;
+      window.location.hash = v;
       this.$nextTick(() => {
-        this.loadAnalytics(); // Re-render charts
+        this.loadAnalytics();
+        if (v === 'admin') this.loadUsers();
+        if (v === 'profile') this.loadProfile();
       });
     },
 
     showToast(message, type = 'success') {
       const id = Date.now();
       this.toasts.push({ id, message, type, visible: true });
-      if (type === 'success') {
-        const audio = new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU');
-      }
-      setTimeout(() => {
-        const t = this.toasts.find(x => x.id === id);
-        if (t) t.visible = false;
+      setTimeout(() => this.hideToast(id), 3000);
+    },
+
+    hideToast(id) {
+      const toast = this.toasts.find(t => t.id === id);
+      if (toast) {
+        toast.visible = false;
         setTimeout(() => {
-          this.toasts = this.toasts.filter(x => x.id !== id);
-        }, 300);
-      }, 3000);
+          this.toasts = this.toasts.filter(t => t.id !== id);
+        }, 500); // Wait for fade out animation
+      }
     },
 
     confirmAction(message, callback) {
@@ -95,17 +185,109 @@ function appState() {
     },
 
     async loadCategories() {
-      const res = await fetch('./api/categories');
-      this.categories = await res.json();
+      const res = await this.authFetch('./api/categories');
+      if (res) this.categories = await res.json();
+    },
+
+    async loadUsers() {
+      if (this.role !== 'admin') return;
+      this.usersLoading = true;
+      try {
+        const res = await this.authFetch('./api/users');
+        if (res) this.users = await res.json();
+      } finally {
+        this.usersLoading = false;
+      }
+    },
+
+    async removeUser(id) {
+      if (!confirm("Are you sure? This deletes all their data.")) return;
+      await this.authFetch('./api/users?id=' + id, { method: 'DELETE' });
+      this.showToast('User deleted');
+      this.loadUsers();
+    },
+
+    openUserModal() {
+      this.adminUserForm = { username: '', password: '', role: 'user', recovery_question: '', recovery_answer: '' };
+      this.adminUserModal.open = true;
+    },
+
+    async adminCreateUser() {
+      if (!this.adminUserForm.username || !this.adminUserForm.password || !this.adminUserForm.recovery_question || !this.adminUserForm.recovery_answer) {
+        this.showToast('All fields are required', 'error');
+        return;
+      }
+      const res = await this.authFetch('./api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...this.adminUserForm })
+      });
+      if (!res) return;
+      const data = await res.json();
+      if (res.status !== 201) {
+        this.showToast(data.error || 'Error creating user', 'error');
+        return;
+      }
+      this.showToast('User created successfully');
+      this.adminUserModal.open = false;
+      this.adminUserForm = { username: '', password: '', role: 'user', recovery_question: '', recovery_answer: '' }; // Reset
+      await this.loadUsers();
+    },
+
+    async updateUserRole(id, role) {
+      const res = await this.authFetch('./api/users/role', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, role })
+      });
+      if (res) {
+        const data = await res.json();
+        if (data.success) {
+          this.showToast(`Role updated to ${role}`);
+          this.loadUsers();
+        } else {
+          this.showToast(data.error || 'Update failed', 'error');
+        }
+      }
+    },
+
+    async loadProfile() {
+      const res = await this.authFetch('./api/me');
+      if (res) {
+        const data = await res.json();
+        this.profileForm.recovery_question = data.recovery_question || '';
+        this.profileForm.recovery_answer = data.recovery_answer || '';
+      }
+    },
+
+    async updateProfileSecurity() {
+      if (!this.profileForm.recovery_question || !this.profileForm.recovery_answer) {
+        this.showToast('Question and Answer required', 'error');
+        return;
+      }
+      const res = await this.authFetch('./api/profile/security', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.profileForm)
+      });
+      if (res) {
+        const data = await res.json();
+        if (data.success) {
+          this.showToast('Security settings updated');
+        } else {
+          this.showToast(data.error || 'Update failed', 'error');
+        }
+      }
     },
 
     async loadHabits() {
-      const res = await fetch('./api/habits');
-      this.habits = await res.json();
+      const res = await this.authFetch('./api/habits');
+      if (res) this.habits = await res.json();
     },
 
     async loadMetrics() {
-      const res = await fetch('./api/metrics');
+      const res = await this.authFetch('./api/metrics');
+      if (!res) return;
       const data = await res.json();
       this.metrics = data;
       this.stats = data.stats || { points: 0, level: 1, xp: 0 };
@@ -113,7 +295,8 @@ function appState() {
     },
 
     async loadCoach() {
-      const res = await fetch('./api/coach');
+      const res = await this.authFetch('./api/coach');
+      if (!res) return;
       const data = await res.json();
       this.coachMessage = data.message;
     },
@@ -123,110 +306,79 @@ function appState() {
       await this.loadCoach();
     },
 
+    async resetProgress() {
+      const res = await this.authFetch('./api/me/reset', { method: 'POST' });
+      if (res) {
+        this.showToast('Progress has been reset');
+        await Promise.all([this.loadMetrics(), this.loadHabits(), this.loadLogs(), this.loadCalendarActivity(), this.loadProfile()]);
+        this.switchView('habits');
+      }
+    },
+
     async loadAnalytics() {
-      // Fetch data
-      const res = await fetch('./api/analytics');
-      const data = await res.json();
+      const res = await this.authFetch('./api/analytics');
+      if (!res) return;
+      this.analyticsData = await res.json();
+    },
 
-      // Trend Chart (Habits)
-      if (this.view === 'habits') {
-        const ctx = document.getElementById('trendChart');
-        if (ctx) {
-          if (this.trendChart) this.trendChart.destroy();
-
-          const labels = data.map(d => new Date(d.log_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
-          const values = data.map(d => d.count);
-
-          // Prediction
-          let predicted = [];
-          if (values.length > 5) {
-            const n = values.length;
-            const sumX = n * (n - 1) / 2;
-            const sumY = values.reduce((a, b) => a + b, 0);
-            const sumXY = values.reduce((a, b, i) => a + b * i, 0);
-            const sumXX = (n - 1) * n * (2 * n - 1) / 6;
-            const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-            const intercept = (sumY - slope * sumX) / n;
-            for (let i = 0; i < 3; i++) predicted.push(Math.max(0, Math.round(slope * (n + i) + intercept)));
-          }
-
-          this.trendChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-              labels: [...labels, 'Next 1', 'Next 2', 'Next 3'],
-              datasets: [{
-                label: 'Habits Completed',
-                data: values,
-                borderColor: '#18181b',
-                backgroundColor: 'rgba(24, 24, 27, 0.1)',
-                tension: 0.3,
-                fill: true
-              }, {
-                label: 'Prediction',
-                data: [...Array(values.length).fill(null), ...predicted],
-                borderColor: '#f59e0b',
-                borderDash: [5, 5],
-                tension: 0.3,
-                pointRadius: 0
-              }]
-            },
-            options: {
-              responsive: true,
-              plugins: {
-                legend: { display: false },
-                tooltip: {
-                  callbacks: {
-                    title: (items) => {
-                      const idx = items[0].dataIndex;
-                      if (idx < labels.length) {
-                        const d = new Date(data[idx].date); // Ensure date is valid
-                        return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-                      }
-                      return items[0].label;
-                    },
-                    label: (item) => `${item.raw} completed`
-                  }
-                }
-              },
-              scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
-            }
-          });
-        }
+    computeHeatMapRange() {
+      const dates = [];
+      const today = new Date();
+      for (let i = 27; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - i);
+        dates.push(this.toLocalYMD(d));
       }
+      this.last30Days = dates;
+    },
 
-      // Routine Chart
-      if (this.view === 'routines') {
-        const ctxR = document.getElementById('routineChart');
-        if (ctxR) {
-          if (this.routineChart) this.routineChart.destroy();
-          const labels = data.map(d => new Date(d.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
-          const values = data.map(d => Math.min(100, d.count * 10));
+    getRoutineIntensity(date, kind) {
+      if (!this.analyticsData || !this.analyticsData.stats) return 0;
+      const day = this.analyticsData.stats.find(s => s.date === date);
+      if (!day) return 0;
+      const count = kind === 'morning' ? day.morning_count : day.night_count;
+      const total = kind === 'morning' ? this.analyticsData.morningTotal : this.analyticsData.nightTotal;
+      return total > 0 ? count / total : 0;
+    },
 
-          this.routineChart = new Chart(ctxR, {
-            type: 'bar',
-            data: {
-              labels: labels,
-              datasets: [{
-                label: 'Routine Consistency',
-                data: values,
-                backgroundColor: '#f97316',
-                borderRadius: 4
-              }]
-            },
-            options: {
-              responsive: true,
-              plugins: { legend: { display: false } },
-              scales: { y: { beginAtZero: true, max: 100 } }
-            }
-          });
-        }
-      }
+    getHeatMapColor(intensity, kind) {
+      if (!intensity || intensity <= 0) return 'bg-zinc-100';
+      const base = kind === 'morning' ? 'orange' : 'indigo';
+      if (intensity <= 0.25) return `bg-${base}-200`;
+      if (intensity <= 0.5) return `bg-${base}-400`;
+      if (intensity <= 0.75) return `bg-${base}-600`;
+      return `bg-${base}-800`;
+    },
+
+    hasActivity(ymd) {
+      return this.calendar.activityMap && this.calendar.activityMap[ymd] && this.calendar.activityMap[ymd].size > 0;
+    },
+
+    isToday(ymd) {
+      if (!ymd) return false;
+      return ymd === this.toLocalYMD(new Date());
     },
 
     // Calendar Logic
     async loadCalendarActivity() {
-      const res = await fetch('./api/calendar_activity');
-      this.calendar.activity = await res.json();
+      const y = this.calendar.year;
+      const m = this.calendar.month;
+      const start = new Date(y, m, 1);
+      const end = new Date(y, m + 1, 0);
+
+      const res = await this.authFetch(`./api/habit_logs?start=${this.toLocalYMD(start)}&end=${this.toLocalYMD(end)}`);
+      if (!res) return;
+      const data = await res.json();
+
+      const activityMap = {};
+      const logs = data.logs || {};
+      for (const [habitId, dateMap] of Object.entries(logs)) {
+        for (const dateStr of Object.keys(dateMap)) {
+          if (!activityMap[dateStr]) activityMap[dateStr] = new Set();
+          activityMap[dateStr].add(Number(habitId));
+        }
+      }
+      this.calendar.activityMap = activityMap;
     },
 
     computeCalendar() {
@@ -237,9 +389,14 @@ function appState() {
       const daysInMonth = new Date(y, m + 1, 0).getDate();
       const grid = [];
       for (let i = 0; i < startDay; i++) grid.push(null);
-      for (let d = 1; d <= daysInMonth; d++) grid.push(new Date(y, m, d).toISOString().slice(0, 10));
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        grid.push(this.toLocalYMD(new Date(y, m, d)));
+      }
       while (grid.length % 7 !== 0) grid.push(null);
       this.calendar.days = grid;
+
+      this.loadCalendarActivity();
     },
 
     calendarTitle() {
@@ -259,8 +416,45 @@ function appState() {
       this.computeCalendar();
     },
 
-    hasActivity(ymd) {
-      return this.calendar.activity.includes(ymd);
+    getCompletedCount(d) {
+      if (!this.calendar.activityMap || !this.calendar.activityMap[d]) return 0;
+      return this.calendar.activityMap[d].size;
+    },
+
+    isPerfectDay(ymd) {
+      if (!this.calendar.activityMap) return false;
+
+      const dayDate = new Date(ymd + 'T12:00:00');
+      const now = new Date();
+      if (new Date(ymd).getTime() > now.getTime()) return false; // Future is never perfect
+
+      const completedIds = this.calendar.activityMap[ymd] || new Set();
+
+      let activeCount = 0;
+      let dailyDone = 0;
+
+      this.habits.forEach(h => {
+        // Simple creation check
+        const createdDate = new Date(h.created_at);
+        if (this.toLocalYMD(createdDate) > ymd) return; // Created after this day
+
+        if (h.frequency === 'daily') {
+          activeCount++;
+          if (completedIds.has(h.id)) dailyDone++;
+        }
+      });
+
+      if (activeCount === 0) return false;
+      return dailyDone >= activeCount;
+    },
+
+    isPastMonth(ymd) {
+      if (!ymd) return false;
+      const date = new Date(ymd);
+      const today = new Date();
+      const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      const dateMonthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+      return dateMonthStart < currentMonthStart;
     },
 
     openHabitModal(habit = null) {
@@ -286,21 +480,20 @@ function appState() {
       if (!payload.title) return;
 
       if (this.habitModal.isEdit) {
-        await fetch('./api/habits?id=' + this.habitForm.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        await this.authFetch('./api/habits?id=' + this.habitForm.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         this.showToast('Habit updated!');
       } else {
-        await fetch('./api/habits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        await this.authFetch('./api/habits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         this.showToast('Habit created!');
       }
 
       this.habitModal.open = false;
-      // Force reload to ensure UI updates
       this.habits = [];
       await Promise.all([this.loadHabits(), this.loadMetrics()]);
     },
 
     async removeHabit(id) {
-      await fetch('./api/habits?id=' + id, { method: 'DELETE' });
+      await this.authFetch('./api/habits?id=' + id, { method: 'DELETE' });
       this.showToast('Habit deleted');
       await Promise.all([this.loadHabits(), this.loadMetrics()]);
     },
@@ -315,11 +508,11 @@ function appState() {
         return monday;
       })();
       const monday = new Date(start);
-      this.weekStartYmd = monday.toISOString().slice(0, 10);
+      this.weekStartYmd = this.toLocalYMD(monday);
       this.weekDates = Array.from({ length: 7 }, (_, i) => {
         const d = new Date(monday);
         d.setDate(monday.getDate() + i);
-        return d.toISOString().slice(0, 10);
+        return this.toLocalYMD(d);
       });
     },
 
@@ -339,26 +532,32 @@ function appState() {
     async prevWeek() {
       const s = new Date(this.weekStartYmd);
       s.setDate(s.getDate() - 7);
-      this.weekStartYmd = s.toISOString().slice(0, 10);
+      this.weekStartYmd = this.toLocalYMD(s);
       this.computeWeek();
       await this.loadLogs();
     },
     async nextWeek() {
       const s = new Date(this.weekStartYmd);
       s.setDate(s.getDate() + 7);
-      this.weekStartYmd = s.toISOString().slice(0, 10);
+      this.weekStartYmd = this.toLocalYMD(s);
       this.computeWeek();
       await this.loadLogs();
     },
 
-    isToday(ymd) {
-      return ymd === new Date().toISOString().slice(0, 10);
+    isFuture(ymd) {
+      return ymd > this.toLocalYMD(new Date());
+    },
+
+    isCurrentWeek() {
+      const today = this.toLocalYMD(new Date());
+      return this.weekDates.includes(today);
     },
 
     async loadLogs() {
       const start = this.weekDates[0];
       const end = this.weekDates[this.weekDates.length - 1];
-      const res = await fetch(`./api/habit_logs?start=${start}&end=${end}`);
+      const res = await this.authFetch(`./api/habit_logs?start=${start}&end=${end}`);
+      if (!res) return;
       const data = await res.json();
       this.logsMap = data.logs || {};
     },
@@ -369,14 +568,20 @@ function appState() {
     },
 
     async toggleMark(habitId, ymd) {
-      let res;
-      if (this.isMarked(habitId, ymd)) {
-        res = await fetch(`./api/unmark_habit?id=${habitId}&d=${ymd}`, { method: 'POST' });
-      } else {
-        res = await fetch(`./api/mark_habit?id=${habitId}&d=${ymd}`, { method: 'POST' });
-        this.showToast('Habit completed!', 'success');
+      if (this.isFuture(ymd)) {
+        this.showToast("Cannot check future dates", "error");
+        return;
       }
 
+      let res;
+      if (this.isMarked(habitId, ymd)) {
+        res = await this.authFetch(`./api/unmark_habit?id=${habitId}&d=${ymd}`, { method: 'POST' });
+      } else {
+        res = await this.authFetch(`./api/mark_habit?id=${habitId}&d=${ymd}`, { method: 'POST' });
+        if (res) this.showToast('Habit completed!', 'success');
+      }
+
+      if (!res) return;
       const data = await res.json();
       if (data.leveledUp) this.showToast(`Level Up! You are now Level ${data.newLevel}`, 'info');
       if (data.newBadges && data.newBadges.length) {
@@ -408,12 +613,10 @@ function appState() {
     },
 
     async loadRoutines() {
-      const [m, n] = await Promise.all([
-        fetch('./api/routines?kind=morning').then(r => r.json()),
-        fetch('./api/routines?kind=night').then(r => r.json()),
-      ]);
-      this.morningRoutine = m;
-      this.nightRoutine = n;
+      const mRes = await this.authFetch('./api/routines?kind=morning');
+      const nRes = await this.authFetch('./api/routines?kind=night');
+      if (mRes) this.morningRoutine = await mRes.json();
+      if (nRes) this.nightRoutine = await nRes.json();
     },
 
     openRoutineModal(kind = 'morning', item = null) {
@@ -435,18 +638,18 @@ function appState() {
       if (!payload.text) return;
 
       if (this.routineModal.isEdit) {
-        await fetch('./api/routines?id=' + this.routineForm.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        await this.authFetch('./api/routines?id=' + this.routineForm.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         this.showToast('Routine updated!');
       } else {
         const list = payload.kind === 'morning' ? this.morningRoutine : this.nightRoutine;
         payload.sort = list.length;
 
-        const res = await fetch('./api/routines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (res.status === 409) {
+        const res = await this.authFetch('./api/routines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (res && res.status === 409) {
           this.showToast('Routine already exists!', 'error');
           return;
         }
-        this.showToast('Routine added!');
+        if (res) this.showToast('Routine added!');
       }
 
       this.routineModal.open = false;
@@ -454,7 +657,7 @@ function appState() {
     },
 
     async removeRoutine(item) {
-      await fetch('./api/routines?id=' + item.id, { method: 'DELETE' });
+      await this.authFetch('./api/routines?id=' + item.id, { method: 'DELETE' });
       this.showToast('Routine item deleted');
       await this.loadRoutines();
     },
@@ -463,12 +666,25 @@ function appState() {
       if (!file) return;
       const form = new FormData();
       form.append('file', file);
-      await fetch('./api/upload_routine_image', { method: 'POST', body: form });
+      // Manually calling authFetch for FormData is tricky because of Content-Type 
+      // authFetch sets header, but for FormData we usually let browser set Boundary
+      // So we will construct headers manually, but NOT Content-Type
+
+      const res = await fetch('./api/upload_routine_image', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${this.token}` },
+        body: form
+      });
+
+      // We could patch authFetch to handle this, but explicit here is fine
+      if (res.status === 401) { this.logout(); return; }
+
       this.routineImage = './assets/routine.jpg?ts=' + Date.now();
     },
 
     async loadRoutineProgress() {
-      const res = await fetch(`./api/routines/progress?date=${this.routineDate}`);
+      const res = await this.authFetch(`./api/routines/progress?date=${this.routineDate}`);
+      if (!res) return;
       const data = await res.json();
       this.routineProgress.completed = data.completed || [];
     },
@@ -478,11 +694,16 @@ function appState() {
     },
 
     async toggleRoutine(id) {
-      const res = await fetch('./api/routines/toggle', {
+      if (this.isFuture(this.routineDate)) {
+        this.showToast("Cannot check future dates", "error");
+        return;
+      }
+      const res = await this.authFetch('./api/routines/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, date: this.routineDate })
       });
+      if (!res) return;
       const data = await res.json();
       if (data.completed) {
         this.routineProgress.completed.push(id);
@@ -500,13 +721,13 @@ function appState() {
     async changeRoutineDate(offset) {
       const d = new Date(this.routineDate);
       d.setDate(d.getDate() + offset);
-      this.routineDate = d.toISOString().slice(0, 10);
+      this.routineDate = this.toLocalYMD(d);
       await this.loadRoutineProgress();
     },
 
     routineDateLabel() {
       const d = new Date(this.routineDate);
-      const today = new Date().toISOString().slice(0, 10);
+      const today = this.toLocalYMD(new Date());
       if (this.routineDate === today) return 'Today';
       return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     },
@@ -529,7 +750,6 @@ function appState() {
         const timeStr = now.toTimeString().slice(0, 5); // HH:MM
 
         this.habits.forEach(h => {
-          // Ensure we compare strings correctly and haven't notified this minute
           if (h.notification_time && h.notification_time === timeStr) {
             if (h._lastNotified !== timeStr) {
               this.showToast(`Time for: ${h.title}`, 'info');
@@ -568,25 +788,24 @@ function appState() {
     startTimer() {
       if (!this.timerActive) this.timerActive = true;
       this.timerPaused = false;
+      if (this.intervalId) return;
 
       this.intervalId = setInterval(() => {
-        if (!this.timerPaused && this.timerSeconds > 0) {
+        if (this.timerPaused) return;
+        if (this.timerSeconds > 0) {
           this.timerSeconds--;
-        } else if (this.timerSeconds === 0) {
+        } else {
+          this.stopTimer();
           this.completeFlowSession();
         }
       }, 1000);
     },
 
     pauseTimer() {
-      this.timerPaused = true;
-      if (this.intervalId) {
-        clearInterval(this.intervalId);
-        this.intervalId = null;
-      }
+      this.timerPaused = !this.timerPaused;
     },
 
-    resetTimer() {
+    stopTimer() {
       if (this.intervalId) {
         clearInterval(this.intervalId);
         this.intervalId = null;
@@ -597,65 +816,20 @@ function appState() {
     },
 
     async completeFlowSession() {
-      if (this.intervalId) {
-        clearInterval(this.intervalId);
-        this.intervalId = null;
-      }
-
-      const minutesCompleted = this.timerPreset;
-      this.showToast(`🎉 Flow session complete! ${minutesCompleted} minutes focused.`, 'success');
-
-      // Send to server
-      const res = await fetch('./api/focus/complete', {
+      const res = await this.authFetch('./api/flow/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ minutes: minutesCompleted })
+        body: JSON.stringify({ minutes: this.timerPreset })
       });
-      const data = await res.json();
-
-      if (data.leveledUp) {
-        this.showToast(`🎊 Level Up! You reached Level ${data.newLevel}!`, 'info');
-      }
-
+      this.showToast(`Flow Session Complete! +${this.timerPreset} Focus Minutes`, 'success');
+      // Update stats
       await this.loadMetrics();
-      this.resetTimer();
-      this.flowModeOpen = false;
     },
 
     formatTime(seconds) {
-      const mins = Math.floor(seconds / 60);
-      const secs = seconds % 60;
-      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    },
-
-    // === HABIT NOTES ===
-    async openNoteModal(habitId, date) {
-      const habit = this.habits.find(h => h.id === habitId);
-      if (!habit) return;
-
-      this.noteModal.habitId = habitId;
-      this.noteModal.date = date;
-      this.noteModal.habitTitle = habit.title;
-
-      // Load existing note
-      const res = await fetch(`./api/habit_note?habit_id=${habitId}&date=${date}`);
-      const data = await res.json();
-      this.noteModal.note = data.note || '';
-      this.noteModal.open = true;
-    },
-
-    async saveNote() {
-      await fetch('./api/habit_note', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          habit_id: this.noteModal.habitId,
-          date: this.noteModal.date,
-          note: this.noteModal.note
-        })
-      });
-      this.showToast('Note saved!');
-      this.noteModal.open = false;
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return `${m}:${s.toString().padStart(2, '0')}`;
     }
-  }
+  };
 }

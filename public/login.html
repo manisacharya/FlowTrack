@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FlowTrack Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+
+<body class="bg-zinc-50 h-screen flex items-center justify-center">
+    <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-sm" x-data="{ 
+        mode: 'login', 
+        username: '', 
+        password: '', 
+        recovery_question: '',
+        recovery_answer: '',
+        forgotStep: 1,
+        forgotQuestion: '',
+        newPassword: '',
+        error: '',
+        success: '',
+
+        async submit() {
+            this.error = '';
+            this.success = '';
+            
+            if (this.mode === 'forgot') {
+                await this.handleForgot();
+                return;
+            }
+
+            const endpoint = this.mode === 'login' ? '/api/login' : '/api/register';
+            try {
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        username: this.username, 
+                        password: this.password,
+                        recovery_question: this.recovery_question,
+                        recovery_answer: this.recovery_answer
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Something went wrong');
+                
+                if (this.mode === 'register') {
+                    this.mode = 'login';
+                    this.success = 'Registration successful! Please login.';
+                    this.password = '';
+                    this.recovery_answer = '';
+                    return;
+                }
+
+                // Login success
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('user_role', data.role);
+                localStorage.setItem('username', data.username);
+                // Redirect admins to admin dashboard
+                if (data.role === 'admin') {
+                    window.location.href = 'index.html#admin';
+                } else {
+                    window.location.href = 'index.html';
+                }
+            } catch (err) {
+                this.error = err.message;
+            }
+        },
+
+        async handleForgot() {
+            if (this.forgotStep === 1) {
+                try {
+                    const res = await fetch(`/api/auth/forgot?username=${this.username}`);
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'User not found');
+                    this.forgotQuestion = data.question;
+                    this.forgotStep = 2;
+                } catch (err) {
+                    this.error = err.message;
+                }
+            } else {
+                try {
+                    const res = await fetch('/api/auth/reset', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            username: this.username,
+                            answer: this.recovery_answer,
+                            newPassword: this.newPassword
+                        })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'Reset failed');
+                    this.success = 'Password reset! You can now login.';
+                    this.mode = 'login';
+                    this.forgotStep = 1;
+                    this.password = '';
+                    this.recovery_answer = '';
+                    this.newPassword = '';
+                } catch (err) {
+                    this.error = err.message;
+                }
+            }
+        }
+    }">
+        <div class="text-center mb-6">
+            <div class="text-4xl mb-2">⚡️</div>
+            <h1 class="text-2xl font-bold text-zinc-800">FlowTrack</h1>
+            <p class="text-zinc-500 text-sm">Productivity for high achievers</p>
+        </div>
+
+        <!-- LOGIN / REGISTER MODE -->
+        <div class="space-y-4" @keyup.enter="submit()" x-show="mode !== 'forgot'">
+            <div>
+                <label class="block text-sm font-medium text-zinc-700 mb-1">Username</label>
+                <input type="text" x-model="username"
+                    class="w-full border border-zinc-300 rounded px-3 py-2 bg-zinc-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-zinc-700 mb-1">Password</label>
+                <input type="password" x-model="password"
+                    class="w-full border border-zinc-300 rounded px-3 py-2 bg-zinc-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+            </div>
+
+            <!-- Registration Additional Fields -->
+            <div x-show="mode === 'register'" x-transition class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-zinc-700 mb-1">Security Question</label>
+                    <input type="text" x-model="recovery_question" placeholder="e.g. Your first pet's name?"
+                        class="w-full border border-zinc-300 rounded px-3 py-2 bg-zinc-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-zinc-700 mb-1">Answer</label>
+                    <input type="text" x-model="recovery_answer"
+                        class="w-full border border-zinc-300 rounded px-3 py-2 bg-zinc-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end" x-show="mode === 'login'">
+                <button @click="mode = 'forgot'; forgotStep = 1; error = ''; success = ''"
+                    class="text-xs text-zinc-500 hover:text-zinc-800 underline">Forgot password?</button>
+            </div>
+
+            <button @click="submit()"
+                class="w-full py-3 bg-zinc-900 text-white rounded font-medium hover:bg-zinc-800 transition-colors"
+                x-text="mode === 'login' ? 'Log In' : 'Sign Up'"></button>
+        </div>
+
+        <!-- FORGOT PASSWORD MODE -->
+        <div class="space-y-4" @keyup.enter="submit()" x-show="mode === 'forgot'" x-cloak>
+            <div class="text-center">
+                <h2 class="text-lg font-bold text-zinc-800">Reset Password</h2>
+                <p class="text-sm text-zinc-500 mb-4"
+                    x-text="forgotStep === 1 ? 'Enter your username' : 'Answer your security question'"></p>
+            </div>
+
+            <div x-show="forgotStep === 1">
+                <label class="block text-sm font-medium text-zinc-700 mb-1">Username</label>
+                <input type="text" x-model="username"
+                    class="w-full border border-zinc-300 rounded px-3 py-2 bg-zinc-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+            </div>
+
+            <div x-show="forgotStep === 2" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">Secret
+                        Question</label>
+                    <div class="p-3 bg-zinc-50 border border-zinc-100 rounded text-sm text-zinc-800 italic"
+                        x-text="forgotQuestion"></div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-zinc-700 mb-1">Your Answer</label>
+                    <input type="text" x-model="recovery_answer"
+                        class="w-full border border-zinc-300 rounded px-3 py-2 bg-zinc-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-zinc-700 mb-1">New Password</label>
+                    <input type="password" x-model="newPassword"
+                        class="w-full border border-zinc-300 rounded px-3 py-2 bg-zinc-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-zinc-900" />
+                </div>
+            </div>
+
+            <button @click="submit()"
+                class="w-full py-3 bg-zinc-900 text-white rounded font-medium hover:bg-zinc-800 transition-colors"
+                x-text="forgotStep === 1 ? 'Next' : 'Reset Password'"></button>
+
+            <button @click="mode = 'login'; error = ''; success = ''"
+                class="w-full text-center text-sm text-zinc-500 hover:text-zinc-800 underline">Back to Login</button>
+        </div>
+
+        <!-- Alerts -->
+        <div class="mt-4 space-y-2">
+            <div x-show="error" class="p-3 rounded bg-red-50 text-red-600 text-sm border border-red-100 text-center"
+                x-text="error" x-transition></div>
+            <div x-show="success"
+                class="p-3 rounded bg-green-50 text-green-600 text-sm border border-green-100 text-center"
+                x-text="success" x-transition></div>
+        </div>
+
+        <div class="text-center text-sm text-zinc-500 mt-6" x-show="mode !== 'forgot'">
+            <span x-text="mode === 'login' ? 'New here?' : 'Already have an account?'"></span>
+            <button @click="mode = mode === 'login' ? 'register' : 'login'; error = ''; success = ''"
+                class="underline text-zinc-900 hover:text-zinc-700 ml-1"
+                x-text="mode === 'login' ? 'Create Account' : 'Log In'"></button>
+        </div>
+    </div>
+</body>
+
+</html>

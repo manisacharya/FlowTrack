@@ -6,9 +6,12 @@ const multer = require('multer');
 const path = require('path');
 const db = require('./database');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const SECRET_KEY = 'super_secret_key_change_this'; // In prod use env var
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -24,7 +27,9 @@ const storage = multer.diskStorage({
         cb(null, dir);
     },
     filename: function (req, file, cb) {
-        cb(null, file.originalname);
+        const fileExt = path.extname(file.originalname);
+        const fileName = path.basename(file.originalname, fileExt) + '-' + Date.now() + fileExt;
+        cb(null, fileName);
     }
 });
 const upload = multer({ storage: storage });
@@ -51,30 +56,66 @@ const dbAll = (sql, params = []) => new Promise((resolve, reject) => {
     });
 });
 
-// --- Gamification Logic ---
-async function awardPoints(points) {
-    await dbRun('UPDATE user_stats SET points = points + ?, xp = xp + ?', [points, points]);
+// --- Middleware ---
+
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token == null) return res.sendStatus(401);
+
+    jwt.verify(token, SECRET_KEY, (err, user) => {
+        if (err) return res.sendStatus(403);
+        req.user = user;
+        next();
+    });
+}
+
+function authorizeAdmin(req, res, next) {
+    if (req.user && req.user.role === 'admin') {
+        next();
+    } else {
+        res.status(403).json({ error: 'Admin access required' });
+    }
+}
+
+// --- Gamification Logic (Scoped) ---
+async function awardPoints(userId, points) {
+    // Ensure stats exist
+    let stats = await dbGet('SELECT * FROM user_stats WHERE user_id = ?', [userId]);
+    if (!stats) {
+        await dbRun('INSERT INTO user_stats (user_id, points, level, xp, focus_minutes) VALUES (?, 0, 1, 0, 0)', [userId]);
+        stats = { level: 1, xp: 0 };
+    }
+
+    await dbRun('UPDATE user_stats SET points = points + ?, xp = xp + ? WHERE user_id = ?', [points, points, userId]);
+
     // Check level up (simple logic: level * 100 xp needed)
-    const stats = await dbGet('SELECT * FROM user_stats LIMIT 1');
+    stats = await dbGet('SELECT * FROM user_stats WHERE user_id = ?', [userId]);
     const needed = stats.level * 100;
     let leveledUp = false;
     if (stats.xp >= needed) {
-        await dbRun('UPDATE user_stats SET level = level + 1, xp = xp - ?', [needed]);
+        await dbRun('UPDATE user_stats SET level = level + 1, xp = xp - ? WHERE user_id = ?', [needed, userId]);
         leveledUp = true;
     }
     return { leveledUp, newLevel: leveledUp ? stats.level + 1 : stats.level };
 }
 
-async function checkBadges() {
+async function checkBadges(userId) {
     const earned = [];
-    const stats = await dbGet('SELECT * FROM user_stats LIMIT 1');
-    const totalHabits = (await dbGet('SELECT COUNT(*) as c FROM habit_logs')).c;
-    const maxStreak = (await dbGet('SELECT MAX(streak) as c FROM habits')).c || 0;
-    const morningCount = (await dbGet("SELECT COUNT(*) as c FROM routine_logs l JOIN routines r ON l.routine_id = r.id WHERE r.kind = 'morning'")).c;
-    const nightCount = (await dbGet("SELECT COUNT(*) as c FROM routine_logs l JOIN routines r ON l.routine_id = r.id WHERE r.kind = 'night'")).c;
+    const stats = await dbGet('SELECT * FROM user_stats WHERE user_id = ?', [userId]);
+    if (!stats) return []; // Should exist by now
+
+    // Scoped Queries
+    const totalHabits = (await dbGet('SELECT COUNT(*) as c FROM habit_logs l JOIN habits h ON l.habit_id = h.id WHERE h.user_id = ?', [userId])).c;
+    const maxStreak = (await dbGet('SELECT MAX(streak) as c FROM habits WHERE user_id = ?', [userId])).c || 0;
+
+    // For routines, we now use routine_logs which has user_id
+    const morningCount = (await dbGet("SELECT COUNT(*) as c FROM routine_logs l JOIN routines r ON l.routine_id = r.id WHERE r.kind = 'morning' AND l.user_id = ?", [userId])).c;
+    const nightCount = (await dbGet("SELECT COUNT(*) as c FROM routine_logs l JOIN routines r ON l.routine_id = r.id WHERE r.kind = 'night' AND l.user_id = ?", [userId])).c;
 
     const badges = await dbAll('SELECT * FROM badges');
-    const userBadges = await dbAll('SELECT badge_id FROM user_badges');
+    const userBadges = await dbAll('SELECT badge_id FROM user_badges WHERE user_id = ?', [userId]);
     const userBadgeIds = new Set(userBadges.map(b => b.badge_id));
 
     for (const b of badges) {
@@ -86,7 +127,7 @@ async function checkBadges() {
         if (b.condition_type === 'night_routine' && nightCount >= b.condition_value) qualified = true;
 
         if (qualified) {
-            await dbRun('INSERT INTO user_badges (badge_id) VALUES (?)', [b.id]);
+            await dbRun('INSERT INTO user_badges (user_id, badge_id) VALUES (?, ?)', [userId, b.id]);
             earned.push(b);
         }
     }
@@ -95,8 +136,125 @@ async function checkBadges() {
 
 // --- API Routes ---
 
-// Categories
-app.get('/api/categories', async (req, res) => {
+// AUTH
+app.post('/api/register', async (req, res) => {
+    const { username, password, recovery_question, recovery_answer } = req.body;
+    if (!username || !password || !recovery_question || !recovery_answer) {
+        return res.status(400).json({ error: 'Username, password, and security question are required' });
+    }
+
+    try {
+        const hash = await bcrypt.hash(password, 10);
+        // Only regular users can register publicly
+        const result = await dbRun('INSERT INTO users (username, password_hash, role, recovery_question, recovery_answer) VALUES (?, ?, ?, ?, ?)',
+            [username, hash, 'user', recovery_question, recovery_answer]);
+
+        // Init stats
+        await dbRun('INSERT INTO user_stats (user_id, points, level, xp, focus_minutes) VALUES (?, 0, 1, 0, 0)', [result.lastID]);
+
+        res.status(201).json({ message: 'User created' });
+    } catch (err) {
+        res.status(500).json({ error: err.message.includes('UNIQUE') ? 'Username taken' : err.message });
+    }
+});
+
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const user = await dbGet('SELECT * FROM users WHERE username = ?', [username]);
+        if (!user) return res.status(400).json({ error: 'User not found' });
+
+        if (await bcrypt.compare(password, user.password_hash)) {
+            const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, SECRET_KEY);
+            res.json({ token, role: user.role, username: user.username });
+        } else {
+            res.status(403).json({ error: 'Invalid password' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Forgot Password Flow
+app.get('/api/auth/forgot', async (req, res) => {
+    const { username } = req.query;
+    if (!username) return res.status(400).json({ error: 'Username required' });
+
+    try {
+        const user = await dbGet('SELECT recovery_question FROM users WHERE username = ?', [username]);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (!user.recovery_question) return res.status(400).json({ error: 'No recovery question set for this user' });
+
+        res.json({ question: user.recovery_question });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/auth/reset', async (req, res) => {
+    const { username, answer, newPassword } = req.body;
+    if (!username || !answer || !newPassword) return res.status(400).json({ error: 'All fields required' });
+
+    try {
+        const user = await dbGet('SELECT * FROM users WHERE username = ?', [username]);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        if (user.recovery_answer === answer) {
+            const hash = await bcrypt.hash(newPassword, 10);
+            await dbRun('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
+            res.json({ message: 'Password reset successful' });
+        } else {
+            res.status(403).json({ error: 'Incorrect answer' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/me', authenticateToken, async (req, res) => {
+    try {
+        const user = await dbGet('SELECT id, username, role, recovery_question, recovery_answer FROM users WHERE id = ?', [req.user.id]);
+        res.json(user);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.patch('/api/profile/security', authenticateToken, async (req, res) => {
+    const { recovery_question, recovery_answer } = req.body;
+    if (!recovery_question || !recovery_answer) {
+        return res.status(400).json({ error: 'Question and answer are required' });
+    }
+    try {
+        await dbRun('UPDATE users SET recovery_question = ?, recovery_answer = ? WHERE id = ?',
+            [recovery_question, recovery_answer, req.user.id]);
+        res.json({ success: true, message: 'Security settings updated' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/me/reset', authenticateToken, async (req, res) => {
+    try {
+        // Clear habit logs
+        await dbRun('DELETE FROM habit_logs WHERE habit_id IN (SELECT id FROM habits WHERE user_id = ?)', [req.user.id]);
+        // Reset habit streaks
+        await dbRun('UPDATE habits SET streak = 0 WHERE user_id = ?', [req.user.id]);
+        // Clear routine logs
+        await dbRun('DELETE FROM routine_logs WHERE user_id = ?', [req.user.id]);
+        // Clear badges
+        await dbRun('DELETE FROM user_badges WHERE user_id = ?', [req.user.id]);
+        // Reset stats
+        await dbRun('UPDATE user_stats SET points = 0, level = 1, xp = 0, focus_minutes = 0 WHERE user_id = ?', [req.user.id]);
+
+        res.json({ success: true, message: 'Progress reset' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Categories (Authenticated)
+app.get('/api/categories', authenticateToken, async (req, res) => {
     try {
         const rows = await dbAll('SELECT * FROM categories ORDER BY name ASC');
         res.json(rows);
@@ -105,7 +263,7 @@ app.get('/api/categories', async (req, res) => {
     }
 });
 
-app.post('/api/categories', async (req, res) => {
+app.post('/api/categories', authenticateToken, authorizeAdmin, async (req, res) => {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
     try {
@@ -117,23 +275,23 @@ app.post('/api/categories', async (req, res) => {
     }
 });
 
-// Habits
-app.get('/api/habits', async (req, res) => {
+// Habits (Scoped)
+app.get('/api/habits', authenticateToken, async (req, res) => {
     try {
-        const rows = await dbAll('SELECT * FROM habits ORDER BY id DESC');
+        const rows = await dbAll('SELECT * FROM habits WHERE user_id = ? ORDER BY sort ASC, id ASC', [req.user.id]);
         res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-app.post('/api/habits', async (req, res) => {
+app.post('/api/habits', authenticateToken, async (req, res) => {
     const { title, frequency, color, icon, notification_time, notification_enabled } = req.body;
     if (!title) return res.status(400).json({ error: 'Missing title' });
     try {
         const result = await dbRun(
-            'INSERT INTO habits (title, frequency, color, icon, notification_time, notification_enabled) VALUES (?, ?, ?, ?, ?, ?)',
-            [title, frequency || 'daily', color || '#000000', icon || '📝', notification_time || '', notification_enabled ? 1 : 0]
+            'INSERT INTO habits (user_id, title, frequency, color, icon, notification_time, notification_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [req.user.id, title, frequency || 'daily', color || '#000000', icon || '📝', notification_time || '', notification_enabled ? 1 : 0]
         );
         const row = await dbGet('SELECT * FROM habits WHERE id = ?', [result.lastID]);
         res.json(row);
@@ -142,12 +300,16 @@ app.post('/api/habits', async (req, res) => {
     }
 });
 
-app.put('/api/habits', async (req, res) => {
+app.put('/api/habits', authenticateToken, async (req, res) => {
     const { id } = req.query;
     const { title, frequency, color, icon, notification_time, notification_enabled } = req.body;
     if (!id) return res.status(400).json({ error: 'Missing id' });
 
     try {
+        // Verify ownership
+        const habit = await dbGet('SELECT user_id FROM habits WHERE id = ?', [id]);
+        if (!habit || habit.user_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+
         const fields = [];
         const params = [];
         if (title !== undefined) { fields.push('title = ?'); params.push(title); }
@@ -168,10 +330,13 @@ app.put('/api/habits', async (req, res) => {
     }
 });
 
-app.delete('/api/habits', async (req, res) => {
+app.delete('/api/habits', authenticateToken, async (req, res) => {
     const { id } = req.query;
     if (!id) return res.status(400).json({ error: 'Missing id' });
     try {
+        const habit = await dbGet('SELECT user_id FROM habits WHERE id = ?', [id]);
+        if (!habit || habit.user_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' });
+
         await dbRun('DELETE FROM habits WHERE id = ?', [id]);
         res.json({ deleted: id });
     } catch (err) {
@@ -179,14 +344,22 @@ app.delete('/api/habits', async (req, res) => {
     }
 });
 
-// Habit Logs
-app.get('/api/habit_logs', async (req, res) => {
+
+
+
+// Habit Logs (Scoped)
+app.get('/api/habit_logs', authenticateToken, async (req, res) => {
     const { start, end } = req.query;
     try {
-        let sql = 'SELECT * FROM habit_logs';
-        const params = [];
+        // Query logs for habits owned by user
+        let sql = `
+            SELECT l.* FROM habit_logs l
+            JOIN habits h ON l.habit_id = h.id
+            WHERE h.user_id = ?
+        `;
+        const params = [req.user.id];
         if (start && end) {
-            sql += ' WHERE log_date BETWEEN ? AND ?';
+            sql += ' AND l.log_date BETWEEN ? AND ?';
             params.push(start, end);
         }
         const rows = await dbAll(sql, params);
@@ -204,8 +377,8 @@ app.get('/api/habit_logs', async (req, res) => {
 });
 
 // Mark/Unmark Habit Logic
-async function updateHabitStreak(id) {
-    const habit = await dbGet('SELECT * FROM habits WHERE id = ?', [id]);
+async function updateHabitStreak(id, userId) {
+    const habit = await dbGet('SELECT * FROM habits WHERE id = ? AND user_id = ?', [id, userId]);
     if (!habit) return;
 
     const logs = await dbAll('SELECT log_date FROM habit_logs WHERE habit_id = ? ORDER BY log_date DESC', [id]);
@@ -213,81 +386,49 @@ async function updateHabitStreak(id) {
 
     let streak = 0;
     if (dates.length > 0) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        // Helper to get Monday of the week (YYYY-MM-DD)
+        const getMonday = (dStr) => {
+            const d = new Date(dStr + 'T12:00:00');
+            const day = d.getDay();
+            const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+            return new Date(d.setDate(diff)).toISOString().slice(0, 10);
+        };
 
-        // Sort dates descending just in case
-        dates.sort((a, b) => new Date(b) - new Date(a));
+        if (habit.frequency === 'weekly') {
+            // Group distinct weeks
+            const weeks = [...new Set(dates.map(d => getMonday(d)))].sort((a, b) => new Date(b) - new Date(a));
+            streak = 1;
+            let currentMonday = new Date(weeks[0]);
 
-        const lastMarkedDate = new Date(dates[0]);
-        lastMarkedDate.setHours(0, 0, 0, 0);
+            for (let i = 1; i < weeks.length; i++) {
+                const prevMonday = new Date(weeks[i]);
+                const diffTime = Math.abs(currentMonday - prevMonday);
+                const diffWeeks = Math.round(diffTime / (1000 * 60 * 60 * 24 * 7));
 
-        if (habit.frequency === 'daily') {
-            // Check if the chain is broken relative to today
-            // If last marked was yesterday or today, streak is valid.
-            // If last marked was before yesterday, streak is broken (0), UNLESS we are just calculating the historical streak length?
-            // Usually "current streak" implies it must be active.
-
-            const diffTime = Math.abs(today - lastMarkedDate);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-            if (diffDays <= 1) {
-                streak = 1;
-                let current = lastMarkedDate;
-                for (let i = 1; i < dates.length; i++) {
-                    const prev = new Date(dates[i]);
-                    prev.setHours(0, 0, 0, 0);
-
-                    const dTime = Math.abs(current - prev);
-                    const dDays = Math.round(dTime / (1000 * 60 * 60 * 24));
-
-                    if (dDays === 1) {
-                        streak++;
-                        current = prev;
-                    } else if (dDays === 0) {
-                        continue; // Same day duplicate
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                streak = 0;
+                if (diffWeeks === 1) {
+                    streak++;
+                    currentMonday = prevMonday;
+                } else break;
             }
-
         } else {
-            // Weekly
-            // If last marked was within last 7 days, streak is active.
-            const diffTime = Math.abs(today - lastMarkedDate);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            // Daily: Consecutive days
+            const sorted = [...new Set(dates)].sort((a, b) => new Date(b) - new Date(a));
+            streak = 1;
+            let current = new Date(sorted[0] + 'T12:00:00');
 
-            if (diffDays <= 7) {
-                streak = 1;
-                let current = lastMarkedDate;
-                for (let i = 1; i < dates.length; i++) {
-                    const prev = new Date(dates[i]);
-                    prev.setHours(0, 0, 0, 0);
+            for (let i = 1; i < sorted.length; i++) {
+                const prev = new Date(sorted[i] + 'T12:00:00');
+                const diffTime = Math.abs(current - prev);
+                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
-                    const dTime = Math.abs(current - prev);
-                    const dDays = Math.round(dTime / (1000 * 60 * 60 * 24));
-
-                    // For weekly, we just need them to be within 7 days of each other? 
-                    // Or strictly one per calendar week? 
-                    // Let's stick to "within 7 days" for simplicity.
-                    if (dDays <= 7 && dDays > 0) {
-                        streak++;
-                        current = prev;
-                    } else if (dDays === 0) {
-                        continue;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                streak = 0;
+                if (diffDays === 1) {
+                    streak++;
+                    current = prev;
+                } else break;
             }
         }
 
-        await dbRun('UPDATE habits SET last_marked = ?, streak = ? WHERE id = ?', [dates[0], streak, id]);
+        await dbRun('UPDATE habits SET streak = ? WHERE id = ?', [streak, id]);
     } else {
         await dbRun('UPDATE habits SET streak = 0 WHERE id = ?', [id]);
     }
@@ -295,17 +436,19 @@ async function updateHabitStreak(id) {
     return await dbGet('SELECT * FROM habits WHERE id = ?', [id]);
 }
 
-app.post('/api/mark_habit', async (req, res) => {
+app.post('/api/mark_habit', authenticateToken, async (req, res) => {
     const { id, d } = req.query;
-    const target = d || new Date().toISOString().slice(0, 10);
+    // Verify ownership
+    const habit = await dbGet('SELECT id FROM habits WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    if (!habit) return res.status(403).json({ error: 'Not authorized' });
 
     try {
-        await dbRun('INSERT OR IGNORE INTO habit_logs (habit_id, log_date) VALUES (?, ?)', [id, target]);
-        const updated = await updateHabitStreak(id);
+        await dbRun('INSERT OR IGNORE INTO habit_logs (habit_id, log_date) VALUES (?, ?)', [id, d]);
+        const updated = await updateHabitStreak(id, req.user.id);
 
         // Gamification
-        const { leveledUp, newLevel } = await awardPoints(10);
-        const newBadges = await checkBadges();
+        const { leveledUp, newLevel } = await awardPoints(req.user.id, 10);
+        const newBadges = await checkBadges(req.user.id);
 
         res.json({ ...updated, leveledUp, newLevel, newBadges });
     } catch (err) {
@@ -313,13 +456,14 @@ app.post('/api/mark_habit', async (req, res) => {
     }
 });
 
-app.post('/api/unmark_habit', async (req, res) => {
+app.post('/api/unmark_habit', authenticateToken, async (req, res) => {
     const { id, d } = req.query;
-    const target = d || new Date().toISOString().slice(0, 10);
+    const habit = await dbGet('SELECT id FROM habits WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    if (!habit) return res.status(403).json({ error: 'Not authorized' });
 
     try {
-        await dbRun('DELETE FROM habit_logs WHERE habit_id = ? AND log_date = ?', [id, target]);
-        const updated = await updateHabitStreak(id);
+        await dbRun('DELETE FROM habit_logs WHERE habit_id = ? AND log_date = ?', [id, d]);
+        const updated = await updateHabitStreak(id, req.user.id);
         res.json(updated);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -327,16 +471,15 @@ app.post('/api/unmark_habit', async (req, res) => {
 });
 
 // Habit Notes
-app.post('/api/habit_note', async (req, res) => {
+app.post('/api/habit_note', authenticateToken, async (req, res) => {
     const { habit_id, date, note } = req.body;
-    if (!habit_id || !date) return res.status(400).json({ error: 'Missing habit_id or date' });
+    const habit = await dbGet('SELECT id FROM habits WHERE id = ? AND user_id = ?', [habit_id, req.user.id]);
+    if (!habit) return res.status(403).json({ error: 'Not authorized' });
 
     try {
-        // Check if log exists
         const log = await dbGet('SELECT id FROM habit_logs WHERE habit_id = ? AND log_date = ?', [habit_id, date]);
         if (!log) return res.status(404).json({ error: 'Habit not logged for this date' });
 
-        // Update note (assuming we add a note column to habit_logs)
         await dbRun('UPDATE habit_logs SET note = ? WHERE id = ?', [note, log.id]);
         res.json({ success: true });
     } catch (err) {
@@ -344,9 +487,10 @@ app.post('/api/habit_note', async (req, res) => {
     }
 });
 
-app.get('/api/habit_note', async (req, res) => {
+app.get('/api/habit_note', authenticateToken, async (req, res) => {
     const { habit_id, date } = req.query;
-    if (!habit_id || !date) return res.status(400).json({ error: 'Missing habit_id or date' });
+    const habit = await dbGet('SELECT id FROM habits WHERE id = ? AND user_id = ?', [habit_id, req.user.id]);
+    if (!habit) return res.status(403).json({ error: 'Not authorized' });
 
     try {
         const log = await dbGet('SELECT note FROM habit_logs WHERE habit_id = ? AND log_date = ?', [habit_id, date]);
@@ -356,14 +500,19 @@ app.get('/api/habit_note', async (req, res) => {
     }
 });
 
-// Metrics
-app.get('/api/metrics', async (req, res) => {
+// Metrics (Scoped)
+app.get('/api/metrics', authenticateToken, async (req, res) => {
     try {
-        // const tasksCompleted = (await dbGet('SELECT COUNT(*) as c FROM tasks WHERE completed = 1')).c; // Deprecated
-        const activeHabits = (await dbGet('SELECT COUNT(*) as c FROM habits')).c;
-        const longestStreak = (await dbGet('SELECT MAX(streak) as c FROM habits')).c || 0;
-        const stats = await dbGet('SELECT * FROM user_stats LIMIT 1');
-        const badges = await dbAll('SELECT b.* FROM user_badges ub JOIN badges b ON ub.badge_id = b.id');
+        const activeHabits = (await dbGet('SELECT COUNT(*) as c FROM habits WHERE user_id = ?', [req.user.id])).c;
+        const longestStreak = (await dbGet('SELECT MAX(streak) as c FROM habits WHERE user_id = ?', [req.user.id])).c || 0;
+
+        let stats = await dbGet('SELECT * FROM user_stats WHERE user_id = ? LIMIT 1', [req.user.id]);
+        if (!stats) {
+            await dbRun('INSERT INTO user_stats (user_id) VALUES (?)', [req.user.id]);
+            stats = { points: 0, level: 1, xp: 0 };
+        }
+
+        const badges = await dbAll('SELECT b.* FROM user_badges ub JOIN badges b ON ub.badge_id = b.id WHERE ub.user_id = ?', [req.user.id]);
 
         res.json({ activeHabits, longestStreak, stats, badges });
     } catch (err) {
@@ -372,67 +521,72 @@ app.get('/api/metrics', async (req, res) => {
 });
 
 // Focus Mode
-app.post('/api/focus/complete', async (req, res) => {
+app.post('/api/focus/complete', authenticateToken, async (req, res) => {
     const { minutes } = req.body;
     if (!minutes || minutes < 1) return res.status(400).json({ error: 'Invalid minutes' });
 
     try {
-        // Add focus minutes to stats
-        await dbRun('UPDATE user_stats SET focus_minutes = focus_minutes + ?', [minutes]);
-
-        // Award XP based on focus time (1 XP per 5 minutes)
+        await dbRun('UPDATE user_stats SET focus_minutes = focus_minutes + ? WHERE user_id = ?', [minutes, req.user.id]);
         const xpEarned = Math.floor(minutes / 5);
-        const { leveledUp, newLevel } = await awardPoints(xpEarned);
+        const { leveledUp, newLevel } = await awardPoints(req.user.id, xpEarned);
 
-        const stats = await dbGet('SELECT * FROM user_stats LIMIT 1');
+        const stats = await dbGet('SELECT * FROM user_stats WHERE user_id = ?', [req.user.id]);
         res.json({ stats, leveledUp, newLevel });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Analytics
-app.get('/api/analytics', async (req, res) => {
+// Analytics (Scoped)
+app.get('/api/analytics', authenticateToken, async (req, res) => {
     try {
-        // Last 30 days completion count per day (habits + routines)
-        // We'll combine habit_logs and routine_logs
+        const morningTotal = (await dbGet("SELECT COUNT(*) as c FROM routines WHERE kind = 'morning'")).c || 0;
+        const nightTotal = (await dbGet("SELECT COUNT(*) as c FROM routines WHERE kind = 'night'")).c || 0;
+
         const rows = await dbAll(`
-            SELECT date, SUM(cnt) as count FROM (
-                SELECT log_date as date, COUNT(*) as cnt FROM habit_logs WHERE log_date >= date('now', '-30 days') GROUP BY log_date
-                UNION ALL
-                SELECT log_date as date, COUNT(*) as cnt FROM routine_logs WHERE log_date >= date('now', '-30 days') GROUP BY log_date
-            ) GROUP BY date ORDER BY date ASC
-        `);
-        res.json(rows);
+            SELECT 
+                l.log_date as date,
+                SUM(CASE WHEN r.kind = 'morning' THEN 1 ELSE 0 END) as morning_count,
+                SUM(CASE WHEN r.kind = 'night' THEN 1 ELSE 0 END) as night_count
+            FROM routine_logs l
+            JOIN routines r ON l.routine_id = r.id
+            WHERE l.user_id = ? AND l.log_date >= date('now', '-30 days')
+            GROUP BY l.log_date
+            ORDER BY l.log_date ASC
+        `, [req.user.id]);
+
+        res.json({
+            stats: rows,
+            morningTotal,
+            nightTotal
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Calendar Activity
-app.get('/api/calendar_activity', async (req, res) => {
+// Calendar Activity (Scoped)
+app.get('/api/calendar_activity', authenticateToken, async (req, res) => {
     try {
-        // Get all dates where at least one habit was completed
         const rows = await dbAll(`
-            SELECT DISTINCT log_date FROM habit_logs
+            SELECT DISTINCT log_date FROM habit_logs l JOIN habits h ON l.habit_id = h.id WHERE h.user_id = ?
             UNION
-            SELECT DISTINCT log_date FROM routine_logs
-        `);
+            SELECT DISTINCT log_date FROM routine_logs WHERE user_id = ?
+        `, [req.user.id, req.user.id]);
         res.json(rows.map(r => r.log_date));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Coach
-app.get('/api/coach', async (req, res) => {
+// Coach (Scoped)
+app.get('/api/coach', authenticateToken, async (req, res) => {
     try {
-        const streak = (await dbGet('SELECT MAX(streak) as c FROM habits')).c || 0;
-        const totalLogs = (await dbGet('SELECT COUNT(*) as c FROM habit_logs WHERE log_date >= date("now", "-7 days")')).c;
-        const activeHabits = (await dbGet('SELECT COUNT(*) as c FROM habits')).c;
-        const bestHabit = await dbGet('SELECT title, streak FROM habits ORDER BY streak DESC LIMIT 1');
+        const streak = (await dbGet('SELECT MAX(streak) as c FROM habits WHERE user_id = ?', [req.user.id])).c || 0;
+        const totalLogs = (await dbGet('SELECT COUNT(*) as c FROM habit_logs l JOIN habits h ON l.habit_id = h.id WHERE h.user_id = ? AND log_date >= date("now", "-7 days")', [req.user.id])).c;
+        const activeHabits = (await dbGet('SELECT COUNT(*) as c FROM habits WHERE user_id = ?', [req.user.id])).c;
+        const bestHabit = await dbGet('SELECT title, streak FROM habits WHERE user_id = ? ORDER BY streak DESC LIMIT 1', [req.user.id]);
 
-        // Simulate LLM-like response construction
         const intros = ["Hey there!", "Hello!", "Greetings, productivity master!", "Hi!"];
         const intro = intros[Math.floor(Math.random() * intros.length)];
 
@@ -447,14 +601,7 @@ app.get('/api/coach', async (req, res) => {
             } else {
                 analysis += "You're making progress. Consistency is key, so try to stick to your schedule for a few days in a row to build a solid streak. ";
             }
-
-            if (totalLogs > activeHabits * 5) {
-                analysis += "You've been super active this week. Excellent work!";
-            } else {
-                analysis += "Remember, it's not about perfection, it's about showing up.";
-            }
         }
-
         const message = `${intro} ${analysis}`;
         res.json({ message });
     } catch (err) {
@@ -462,11 +609,11 @@ app.get('/api/coach', async (req, res) => {
     }
 });
 
-
-// Routines
-app.get('/api/routines', async (req, res) => {
+// Routines (Global)
+app.get('/api/routines', authenticateToken, async (req, res) => {
     const { kind } = req.query;
     try {
+        // Open to all
         let sql = 'SELECT * FROM routines';
         const params = [];
         if (kind) {
@@ -482,7 +629,8 @@ app.get('/api/routines', async (req, res) => {
     }
 });
 
-app.post('/api/routines', async (req, res) => {
+// Modify Routines (Admin Only)
+app.post('/api/routines', authenticateToken, authorizeAdmin, async (req, res) => {
     const { kind, text, sort } = req.body;
     if (!kind || !text) return res.status(400).json({ error: 'kind and text are required' });
 
@@ -491,7 +639,6 @@ app.post('/api/routines', async (req, res) => {
         if (duplicate) {
             return res.status(409).json({ error: 'Routine already exists' });
         }
-
         const result = await dbRun('INSERT INTO routines (kind, text, sort) VALUES (?, ?, ?)', [kind, text, sort || 0]);
         const row = await dbGet('SELECT * FROM routines WHERE id = ?', [result.lastID]);
         res.json(row);
@@ -500,7 +647,7 @@ app.post('/api/routines', async (req, res) => {
     }
 });
 
-app.put('/api/routines', async (req, res) => {
+app.put('/api/routines', authenticateToken, authorizeAdmin, async (req, res) => {
     const { id } = req.query;
     const { text, sort, kind } = req.body;
     if (!id) return res.status(400).json({ error: 'Missing id' });
@@ -523,7 +670,7 @@ app.put('/api/routines', async (req, res) => {
     }
 });
 
-app.delete('/api/routines', async (req, res) => {
+app.delete('/api/routines', authenticateToken, authorizeAdmin, async (req, res) => {
     const { id } = req.query;
     if (!id) return res.status(400).json({ error: 'Missing id' });
     try {
@@ -534,25 +681,28 @@ app.delete('/api/routines', async (req, res) => {
     }
 });
 
-// Routine Progress
-app.get('/api/routines/progress', async (req, res) => {
+
+
+
+// Routine Progress (Scoped)
+app.get('/api/routines/progress', authenticateToken, async (req, res) => {
     const { date } = req.query;
     const targetDate = date || new Date().toISOString().slice(0, 10);
     try {
-        const rows = await dbAll('SELECT routine_id FROM routine_logs WHERE log_date = ?', [targetDate]);
+        const rows = await dbAll('SELECT routine_id FROM routine_logs WHERE user_id = ? AND log_date = ?', [req.user.id, targetDate]);
         res.json({ completed: rows.map(r => r.routine_id) });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-app.post('/api/routines/toggle', async (req, res) => {
+app.post('/api/routines/toggle', authenticateToken, async (req, res) => {
     const { id, date } = req.body;
     const targetDate = date || new Date().toISOString().slice(0, 10);
     if (!id) return res.status(400).json({ error: 'Missing id' });
 
     try {
-        const existing = await dbGet('SELECT id FROM routine_logs WHERE routine_id = ? AND log_date = ?', [id, targetDate]);
+        const existing = await dbGet('SELECT id FROM routine_logs WHERE user_id = ? AND routine_id = ? AND log_date = ?', [req.user.id, id, targetDate]);
         let completed = false;
         let leveledUp = false;
         let newLevel = 0;
@@ -561,18 +711,14 @@ app.post('/api/routines/toggle', async (req, res) => {
         if (existing) {
             await dbRun('DELETE FROM routine_logs WHERE id = ?', [existing.id]);
         } else {
-            await dbRun('INSERT INTO routine_logs (routine_id, log_date) VALUES (?, ?)', [id, targetDate]);
+            await dbRun('INSERT INTO routine_logs (user_id, routine_id, log_date) VALUES (?, ?, ?)', [req.user.id, id, targetDate]);
             completed = true;
-
-            // Award XP (5 XP for routine item)
-            const stats = await awardPoints(5); // Changed from addXP to awardPoints
+            const stats = await awardPoints(req.user.id, 5);
             if (stats.leveledUp) {
                 leveledUp = true;
-                newLevel = stats.newLevel; // Changed from stats.level to stats.newLevel
+                newLevel = stats.newLevel;
             }
-
-            // Check Badges
-            newBadges = await checkBadges();
+            newBadges = await checkBadges(req.user.id);
         }
 
         res.json({ completed, leveledUp, newLevel, newBadges });
@@ -581,25 +727,113 @@ app.post('/api/routines/toggle', async (req, res) => {
     }
 });
 
-// Uploads
-app.post('/api/upload_cover', upload.single('file'), (req, res) => {
+// Uploads (Scoped?)
+app.post('/api/upload_cover', authenticateToken, upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file' });
     const oldPath = req.file.path;
-    const newPath = path.join(path.dirname(oldPath), 'cover.jpg');
+    // User-specific cover
+    const newFileName = `cover_${req.user.id}.jpg`;
+    const newPath = path.join(path.dirname(oldPath), newFileName);
+
     fs.rename(oldPath, newPath, (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ ok: true });
     });
 });
 
-app.post('/api/upload_routine_image', upload.single('file'), (req, res) => {
+app.post('/api/upload_routine_image', authenticateToken, upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file' });
     const oldPath = req.file.path;
-    const newPath = path.join(path.dirname(oldPath), 'routine.jpg');
+    const newFileName = `routine_${req.user.id}.jpg`;
+    const newPath = path.join(path.dirname(oldPath), newFileName);
+
     fs.rename(oldPath, newPath, (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ ok: true });
     });
+});
+
+// Admin: User Management
+app.get('/api/users', authenticateToken, authorizeAdmin, async (req, res) => {
+    try {
+        const users = await dbAll(`
+            SELECT u.id, u.username, u.role, u.created_at, IFNULL(s.level, 1) as level 
+            FROM users u
+            LEFT JOIN user_stats s ON u.id = s.user_id
+            ORDER BY u.id DESC
+        `);
+        res.json(users);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/users', authenticateToken, authorizeAdmin, async (req, res) => {
+    const { username, password, role, recovery_question, recovery_answer } = req.body;
+    if (!username || !password || !recovery_question || !recovery_answer) {
+        return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    try {
+        const hash = await bcrypt.hash(password, 10);
+        const result = await dbRun('INSERT INTO users (username, password_hash, role, recovery_question, recovery_answer) VALUES (?, ?, ?, ?, ?)',
+            [username, hash, role || 'user', recovery_question, recovery_answer]);
+
+        // Init stats
+        await dbRun('INSERT INTO user_stats (user_id, points, level, xp, focus_minutes) VALUES (?, 0, 1, 0, 0)', [result.lastID]);
+
+        res.status(201).json({ message: 'User created' });
+    } catch (err) {
+        res.status(500).json({ error: err.message.includes('UNIQUE') ? 'Username taken' : err.message });
+    }
+});
+
+app.patch('/api/users/role', authenticateToken, authorizeAdmin, async (req, res) => {
+    const { id, role } = req.body;
+    if (!id || !role) return res.status(400).json({ error: 'ID and role required' });
+    if (String(id) === String(req.user.id)) return res.status(400).json({ error: 'Cannot change your own role' });
+
+    try {
+        await dbRun('UPDATE users SET role = ? WHERE id = ?', [role, id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/users', authenticateToken, authorizeAdmin, async (req, res) => {
+    const { username, password, role, recovery_question, recovery_answer } = req.body;
+    if (!username || !password || !role || !recovery_question || !recovery_answer) {
+        return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    try {
+        const hash = await bcrypt.hash(password, 10);
+        const result = await dbRun(
+            'INSERT INTO users (username, password_hash, role, recovery_question, recovery_answer) VALUES (?, ?, ?, ?, ?)',
+            [username, hash, role, recovery_question, recovery_answer]
+        );
+
+        // Init stats for the new user
+        await dbRun('INSERT INTO user_stats (user_id, points, level, xp, focus_minutes) VALUES (?, 0, 1, 0, 0)', [result.lastID]);
+
+        res.status(201).json({ message: 'User created' });
+    } catch (err) {
+        res.status(500).json({ error: err.message.includes('UNIQUE') ? 'Username taken' : err.message });
+    }
+});
+
+app.delete('/api/users', authenticateToken, authorizeAdmin, async (req, res) => {
+    const { id } = req.query;
+    if (!id) return res.status(400).json({ error: 'Missing id' });
+    if (String(id) === String(req.user.id)) return res.status(400).json({ error: 'Cannot self-delete' });
+
+    try {
+        await dbRun('DELETE FROM users WHERE id = ?', [id]);
+        res.json({ deleted: id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.listen(PORT, () => {
