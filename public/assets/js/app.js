@@ -30,6 +30,18 @@ function appState() {
     profileEditing: false,
     analyticsData: { stats: [], morningTotal: 0, nightTotal: 0 },
     last30Days: [],
+    detailedLogs: [],
+    reportFilters: {
+      habitId: 'all',
+      granularity: 'daily',
+      page: 1,
+      pageSize: 50,
+      sortField: 'log_date',
+      sortDir: 'desc',
+      dateRange: 'all'
+    },
+    summaryPage: 0,
+    summaryPageSize: 4,
 
     // UI State
     toasts: [],
@@ -69,6 +81,13 @@ function appState() {
       const offset = d.getTimezoneOffset();
       const local = new Date(d.getTime() - (offset * 60 * 1000));
       return local.toISOString().slice(0, 10);
+    },
+
+    // Helper to parse SQLite UTC strings consistently
+    parseUTC(dateStr) {
+      if (!dateStr) return null;
+      if (dateStr.length === 10) return new Date(dateStr); // YYYY-MM-DD is UTC in JS
+      return new Date(dateStr + ' UTC');
     },
 
     // --- AUTHENTICATION HELPER ---
@@ -159,6 +178,7 @@ function appState() {
         this.loadAnalytics();
         if (v === 'admin') this.loadUsers();
         if (v === 'profile') this.loadProfile();
+        if (v === 'reports') this.loadDetailedLogs();
       });
     },
 
@@ -321,6 +341,206 @@ function appState() {
       this.analyticsData = await res.json();
     },
 
+    async loadDetailedLogs() {
+      const res = await this.authFetch('./api/habit_detailed_logs');
+      if (!res) return;
+      this.detailedLogs = await res.json();
+    },
+
+    openNoteModal(habitId, date) {
+      const habit = this.habits.find(h => h.id === habitId);
+      this.noteModal.habitId = habitId;
+      this.noteModal.date = date;
+      this.noteModal.habitTitle = habit ? habit.title : 'Habit';
+
+      // Try to find existing note in logsMap or detailedLogs
+      const log = this.detailedLogs.find(l => l.habit_id === habitId && l.log_date === date);
+      this.noteModal.note = log ? log.note || '' : '';
+
+      this.noteModal.open = true;
+    },
+
+    async saveNote() {
+      const res = await this.authFetch('./api/habit_note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          habit_id: this.noteModal.habitId,
+          date: this.noteModal.date,
+          note: this.noteModal.note
+        })
+      });
+      if (!res) return;
+      this.showToast('Note saved!');
+      this.noteModal.open = false;
+      this.loadDetailedLogs(); // Refresh logs to see the new note in reports
+    },
+
+    filteredReports() {
+      let data = [...this.detailedLogs];
+
+      // 1. Filter by Date Range
+      if (this.reportFilters.dateRange !== 'all') {
+        let cutoffDate = new Date();
+        if (this.reportFilters.dateRange === '7d') cutoffDate.setDate(cutoffDate.getDate() - 7);
+        else if (this.reportFilters.dateRange === '30d') cutoffDate.setDate(cutoffDate.getDate() - 30);
+        else if (this.reportFilters.dateRange === 'month') cutoffDate.setDate(1);
+
+        const cutoffYmd = this.toLocalYMD(cutoffDate);
+        data = data.filter(log => log.log_date >= cutoffYmd);
+      }
+
+      // 2. Filter by habit
+      if (this.reportFilters.habitId !== 'all') {
+        data = data.filter(log => log.habit_id == this.reportFilters.habitId);
+      }
+
+      // 3. Grouping by granularity
+      if (this.reportFilters.granularity !== 'daily') {
+        const grouped = {};
+        data.forEach(log => {
+          const date = new Date(log.log_date);
+          let key;
+          if (this.reportFilters.granularity === 'weekly') {
+            const day = date.getDay();
+            const diff = date.getDate() - day;
+            const weekStart = new Date(date.setDate(diff));
+            key = weekStart.toISOString().slice(0, 10);
+          } else {
+            key = log.log_date.slice(0, 7) + '-01'; // Monthly
+          }
+
+          // CRITICAL BUG FIX: Group by BOTH period and habit_id
+          const compositeKey = `${key}_${log.habit_id}`;
+
+          if (!grouped[compositeKey]) {
+            grouped[compositeKey] = { ...log, log_date: key, count: 0, notes: [] };
+          }
+          grouped[compositeKey].count++;
+          if (log.note) grouped[compositeKey].notes.push(log.note);
+        });
+        data = Object.values(grouped);
+      }
+
+      // 4. Sort
+      data.sort((a, b) => {
+        let valA = a[this.reportFilters.sortField];
+        let valB = b[this.reportFilters.sortField];
+
+        // Handle sorting for specific fields
+        if (this.reportFilters.sortField === 'log_date') {
+          valA = new Date(valA);
+          valB = new Date(valB);
+        } else if (this.reportFilters.sortField === 'title') {
+          valA = (valA || '').toLowerCase();
+          valB = (valB || '').toLowerCase();
+        } else if (this.reportFilters.sortField === 'note') {
+          // If grouped, check notes array, otherwise note string
+          valA = (this.reportFilters.granularity !== 'daily' ? (a.notes || []).join(', ') : (a.note || '')).toLowerCase();
+          valB = (this.reportFilters.granularity !== 'daily' ? (b.notes || []).join(', ') : (b.note || '')).toLowerCase();
+
+          // Ensure empty items stay at bottom
+          if (!valA && valB) return 1;
+          if (valA && !valB) return -1;
+        }
+
+        if (this.reportFilters.sortDir === 'asc') return valA > valB ? 1 : -1;
+        return valA < valB ? 1 : -1;
+      });
+
+      return data;
+    },
+
+    paginatedReports() {
+      const data = this.filteredReports();
+      const start = (this.reportFilters.page - 1) * this.reportFilters.pageSize;
+      return data.slice(start, start + this.reportFilters.pageSize);
+    },
+
+    totalPages() {
+      return Math.ceil(this.filteredReports().length / this.reportFilters.pageSize) || 1;
+    },
+
+    setSort(field) {
+      if (this.reportFilters.sortField === field) {
+        this.reportFilters.sortDir = this.reportFilters.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        this.reportFilters.sortField = field;
+        this.reportFilters.sortDir = 'asc'; // Defaults to asc for title/note
+      }
+      this.reportFilters.page = 1;
+    },
+
+    exportToCSV() {
+      const data = this.filteredReports();
+      if (!data.length) return this.showToast('No data to export', 'error');
+
+      const headers = ['Date', 'Habit', 'Notes/Count', 'Status'];
+      const rows = data.map(log => [
+        log.log_date,
+        log.title,
+        this.reportFilters.granularity === 'daily' ? (log.note || '-') : `${log.count} completions`,
+        'Completed'
+      ]);
+
+      const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `flowtrack_logs_${new Date().toISOString().slice(0, 10)}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      this.showToast('Export successful!');
+    },
+
+    habitSummaries() {
+      const summaries = {};
+      const filteredLogs = [...this.detailedLogs];
+
+      // Apply date filter to summaries too
+      let summaryLogs = filteredLogs;
+      if (this.reportFilters.dateRange !== 'all') {
+        let cutoffDate = new Date();
+        if (this.reportFilters.dateRange === '7d') cutoffDate.setDate(cutoffDate.getDate() - 7);
+        else if (this.reportFilters.dateRange === '30d') cutoffDate.setDate(cutoffDate.getDate() - 30);
+        else if (this.reportFilters.dateRange === 'month') cutoffDate.setDate(1);
+
+        const cutoffYmd = this.toLocalYMD(cutoffDate);
+        summaryLogs = filteredLogs.filter(log => log.log_date >= cutoffYmd);
+      }
+
+      this.habits.forEach(h => {
+        summaries[h.id] = { ...h, count: 0 };
+      });
+      summaryLogs.forEach(log => {
+        if (summaries[log.habit_id]) {
+          summaries[log.habit_id].count++;
+        }
+      });
+      return Object.values(summaries).sort((a, b) => b.count - a.count);
+    },
+
+    paginatedSummaries() {
+      const all = this.habitSummaries();
+      const start = this.summaryPage * this.summaryPageSize;
+      return all.slice(start, start + this.summaryPageSize);
+    },
+
+    nextSummary() {
+      if ((this.summaryPage + 1) * this.summaryPageSize < this.habitSummaries().length) {
+        this.summaryPage++;
+      }
+    },
+
+    prevSummary() {
+      if (this.summaryPage > 0) {
+        this.summaryPage--;
+      }
+    },
+
     computeHeatMapRange() {
       const dates = [];
       const today = new Date();
@@ -424,9 +644,8 @@ function appState() {
     isPerfectDay(ymd) {
       if (!this.calendar.activityMap) return false;
 
-      const dayDate = new Date(ymd + 'T12:00:00');
-      const now = new Date();
-      if (new Date(ymd).getTime() > now.getTime()) return false; // Future is never perfect
+      const today = this.toLocalYMD(new Date());
+      if (ymd > today) return false; // Future is never perfect
 
       const completedIds = this.calendar.activityMap[ymd] || new Set();
 
@@ -435,7 +654,7 @@ function appState() {
 
       this.habits.forEach(h => {
         // Simple creation check
-        const createdDate = new Date(h.created_at);
+        const createdDate = this.parseUTC(h.created_at);
         if (this.toLocalYMD(createdDate) > ymd) return; // Created after this day
 
         if (h.frequency === 'daily') {

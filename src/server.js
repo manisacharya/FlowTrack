@@ -376,6 +376,22 @@ app.get('/api/habit_logs', authenticateToken, async (req, res) => {
     }
 });
 
+// Detailed Habit Logs (Scoped)
+app.get('/api/habit_detailed_logs', authenticateToken, async (req, res) => {
+    try {
+        const rows = await dbAll(`
+            SELECT l.*, h.title, h.icon, h.color 
+            FROM habit_logs l
+            JOIN habits h ON l.habit_id = h.id
+            WHERE h.user_id = ?
+            ORDER BY l.log_date DESC, l.created_at DESC
+        `, [req.user.id]);
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Mark/Unmark Habit Logic
 async function updateHabitStreak(id, userId) {
     const habit = await dbGet('SELECT * FROM habits WHERE id = ? AND user_id = ?', [id, userId]);
