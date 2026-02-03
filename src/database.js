@@ -96,12 +96,14 @@ function initDatabase() {
       habit_id INTEGER NOT NULL,
       log_date TEXT NOT NULL,
       note TEXT,
+      completed INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(habit_id, log_date),
       FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
     )`, (err) => {
       if (!err) {
         db.run(`ALTER TABLE habit_logs ADD COLUMN note TEXT`, (err) => { });
+        db.run(`ALTER TABLE habit_logs ADD COLUMN completed INTEGER DEFAULT 1`, (err) => { });
       }
     });
 

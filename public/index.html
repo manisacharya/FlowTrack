@@ -12,9 +12,50 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="icon"
     href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡️</text></svg>">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#18181b">
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
   <style>
+    :root {
+      --bg-primary: #fafafa;
+      --bg-secondary: #ffffff;
+      --text-primary: #18181b;
+      --text-secondary: #52525b;
+      --border-color: #e4e4e7;
+      --card-bg: #ffffff;
+      --header-bg: #ffffff;
+    }
+
     body {
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      transition: background-color 0.4s ease, color 0.4s ease;
+    }
+
+    /* Global utility for themed backgrounds/borders */
+    .bg-themed-primary {
+      background-color: var(--bg-primary) !important;
+    }
+
+    .bg-themed-secondary {
+      background-color: var(--bg-secondary) !important;
+    }
+
+    .bg-themed-card {
+      background-color: var(--card-bg) !important;
+    }
+
+    .border-themed {
+      border-color: var(--border-color) !important;
+    }
+
+    .text-themed-primary {
+      color: var(--text-primary) !important;
+    }
+
+    .text-themed-secondary {
+      color: var(--text-secondary) !important;
     }
 
     [x-cloak] {
@@ -23,8 +64,8 @@
   </style>
 </head>
 
-<body class="bg-zinc-50 text-zinc-900">
-  <div class="max-w-6xl mx-auto p-4 md:p-6" x-data="appState()" x-init="init()">
+<body class="bg-zinc-50 text-zinc-900" x-data="appState()" x-init="init()">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
 
     <!-- Cover Image -->
     <div class="h-44 md:h-60 rounded-xl overflow-hidden relative mb-6 shadow-md"
@@ -302,6 +343,33 @@
           </div>
         </div>
 
+        <!-- Ambient Sound Controls -->
+        <div class="mb-6">
+          <div class="text-[10px] font-black text-purple-400 uppercase tracking-widest mb-3 text-center">Focus
+            Atmosphere
+          </div>
+          <div class="flex justify-center gap-2">
+            <button @click="toggleAmbientSound('rain')"
+              class="flex flex-col items-center gap-1 p-3 rounded-xl border transition-all w-20"
+              :class="currentAmbientSound === 'rain' ? 'border-purple-600 bg-purple-600 text-white scale-105 shadow-md' : 'border-purple-100 bg-white/50 hover:bg-white text-purple-400'">
+              <span class="text-xl">🌧️</span>
+              <span class="text-[9px] font-bold uppercase">Rain</span>
+            </button>
+            <button @click="toggleAmbientSound('forest')"
+              class="flex flex-col items-center gap-1 p-3 rounded-xl border transition-all w-20"
+              :class="currentAmbientSound === 'forest' ? 'border-purple-600 bg-purple-600 text-white scale-105 shadow-md' : 'border-purple-100 bg-white/50 hover:bg-white text-purple-400'">
+              <span class="text-xl">🌲</span>
+              <span class="text-[9px] font-bold uppercase">Forest</span>
+            </button>
+            <button @click="toggleAmbientSound('lofi')"
+              class="flex flex-col items-center gap-1 p-3 rounded-xl border transition-all w-20"
+              :class="currentAmbientSound === 'lofi' ? 'border-purple-600 bg-purple-600 text-white scale-105 shadow-md' : 'border-purple-100 bg-white/50 hover:bg-white text-purple-400'">
+              <span class="text-xl">☕</span>
+              <span class="text-[9px] font-bold uppercase">Lo-Fi</span>
+            </button>
+          </div>
+        </div>
+
         <!-- Controls -->
         <div class="flex gap-3">
           <button x-show="!timerActive || timerPaused" @click="startTimer()"
@@ -409,14 +477,24 @@
 
       <!-- Week Navigation -->
       <div class="flex items-center justify-between mb-4">
-        <div class="text-lg font-semibold text-zinc-800" x-text="weekTitle()"></div>
+        <div class="text-lg font-semibold text-zinc-800" x-text="habitTitle()"></div>
         <div class="flex items-center gap-2">
-          <button @click="prevWeek()" class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">←
-            Previous</button>
-          <button @click="resetWeek()"
-            class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">Today</button>
-          <button @click="nextWeek()" class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">Next
-            →</button>
+          <!-- Week/Month Toggle -->
+          <div class="flex items-center gap-1 bg-zinc-100 p-0.5 rounded-lg border border-zinc-200 mr-2">
+            <button @click="setHabitView('week')" class="px-3 py-1 text-xs rounded-md transition-all font-medium"
+              :class="habitView === 'week' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500 hover:text-zinc-800'">Week</button>
+            <button @click="setHabitView('month')" class="px-3 py-1 text-xs rounded-md transition-all font-medium"
+              :class="habitView === 'month' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500 hover:text-zinc-800'">Month</button>
+          </div>
+          <div class="flex items-center gap-2">
+            <button @click="prevPeriod()" class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">←
+              Previous</button>
+            <button @click="resetWeek()"
+              class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">Today</button>
+            <button @click="nextPeriod()"
+              class="px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-100 text-sm">Next
+              →</button>
+          </div>
         </div>
       </div>
 
@@ -426,38 +504,82 @@
         <div class="lg:col-span-2 overflow-hidden border border-zinc-200 rounded-xl bg-white shadow-sm">
           <div class="overflow-x-auto">
             <table class="min-w-full text-sm">
-              <thead class="bg-zinc-50 border-b border-zinc-200">
+              <thead class="bg-zinc-50 border-b border-zinc-200 sticky top-0 z-40">
                 <tr>
-                  <th class="text-left font-medium text-zinc-600 px-4 py-3 w-64 sticky left-0 bg-zinc-50 z-10">Habit
+                  <th
+                    class="text-left font-medium text-zinc-600 px-4 py-4 w-[220px] sticky left-0 bg-zinc-50 z-30 border-r border-zinc-200/50">
+                    Habit
                   </th>
-                  <template x-for="d in weekDates">
-                    <th class="text-center font-medium text-zinc-600 px-2 py-3"
-                      :class="isToday(d) ? 'bg-blue-50/50' : ''">
-                      <div x-text="new Date(d).toLocaleDateString(undefined,{weekday:'short'})"
-                        class="text-xs uppercase tracking-wide"></div>
-                      <div class="text-lg font-light text-zinc-900" x-text="new Date(d).getDate()"></div>
+                  <template x-for="d in habitDates">
+                    <th class="text-center font-medium px-4 py-3 transition-all relative min-w-[60px]"
+                      :class="isToday(d) ? 'bg-zinc-100/80 text-zinc-900' : 'text-zinc-600'">
+                      <div x-show="isToday(d)"
+                        class="text-[9px] font-bold tracking-widest text-zinc-400 mb-0.5 uppercase">Today</div>
+                      <div x-show="!isToday(d)" x-text="new Date(d).toLocaleDateString(undefined,{weekday:'short'})"
+                        class="text-[10px] uppercase tracking-widest opacity-80 mb-0.5"></div>
+                      <div class="text-xl font-bold" x-text="new Date(d).getDate()"></div>
                     </th>
                   </template>
-                  <th class="px-4 py-3 w-24 text-center font-medium text-zinc-600">Streak</th>
-                  <th class="px-4 py-3 w-16"></th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-zinc-100" id="habits-list">
                 <template x-for="(h, index) in habits" :key="h.id">
                   <tr class="group hover:bg-zinc-50/50 transition-colors" :data-id="h.id">
-                    <td class="px-4 py-4 sticky left-0 bg-white group-hover:bg-zinc-50/50 z-10">
+                    <td x-data="{ menuOpen: false }"
+                      class="px-4 py-5 sticky left-0 bg-white group-hover:bg-zinc-50 border-r border-zinc-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]"
+                      :class="menuOpen ? 'z-50' : 'z-20'">
                       <div class="flex items-center gap-2">
                         <div class="h-8 w-8 rounded-full flex items-center justify-center text-lg bg-zinc-100 shrink-0"
                           x-text="h.icon || '📝'"></div>
-                        <div class="min-w-0">
-                          <div class="font-medium text-zinc-900 truncate" x-text="h.title"></div>
-                          <div class="text-xs text-zinc-500 flex items-center gap-2">
-                            <span class="flex items-center gap-1">
+                        <div class="min-w-0 flex-1">
+                          <div class="flex items-center gap-2 mb-0.5">
+                            <div class="font-bold text-zinc-900 truncate max-w-[120px]" x-text="h.title"
+                              :title="h.title"></div>
+
+                            <!-- Three Dot Menu (Hover only) -->
+                            <div
+                              class="relative inline-block text-left opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+                              <button @click="menuOpen = !menuOpen" @click.away="menuOpen = false"
+                                class="p-1 hover:bg-zinc-200 rounded-full transition-colors text-zinc-400 hover:text-zinc-700">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                  stroke-linejoin="round">
+                                  <circle cx="12" cy="12" r="1"></circle>
+                                  <circle cx="12" cy="5" r="1"></circle>
+                                  <circle cx="12" cy="19" r="1"></circle>
+                                </svg>
+                              </button>
+                              <div x-show="menuOpen"
+                                class="absolute left-0 mt-2 w-32 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50 py-1"
+                                style="display: none;">
+                                <button @click="openHabitModal(h); menuOpen = false"
+                                  class="flex items-center w-full px-3 py-2 text-xs text-zinc-600 hover:bg-zinc-100 gap-2">
+                                  <span>✏️</span> Edit
+                                </button>
+                                <button
+                                  @click="confirmAction('Delete this habit?', () => removeHabit(h.id)); menuOpen = false"
+                                  class="flex items-center w-full px-3 py-2 text-xs text-red-600 hover:bg-zinc-100 gap-2 font-medium">
+                                  <span>🗑️</span> Delete
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                          <div
+                            class="text-[11px] text-zinc-500 flex items-center gap-2 whitespace-nowrap overflow-hidden">
+                            <span class="flex items-center gap-1 shrink-0">
                               <span class="inline-block w-2 h-2 rounded-full"
                                 :style="`background-color: ${h.color || '#000000'}`"></span>
                               <span x-text="h.frequency==='daily' ? 'Daily' : 'Weekly'"></span>
                             </span>
-                            <span x-show="h.notification_time" class="text-zinc-400 flex items-center gap-0.5"
+                            <span class="text-zinc-400 shrink-0">•</span>
+                            <span class="font-medium text-zinc-600 shrink-0" x-text="weekProgress(h).summary"></span>
+                            <span x-show="isStreakActive(h)"
+                              class="ml-1 text-orange-500 font-bold flex items-center gap-0.5 shrink-0"
+                              :title="h.streak + ' streak (Active)'">
+                              <span>🔥</span>
+                              <span class="text-[10px]" x-text="h.streak"></span>
+                            </span>
+                            <span x-show="h.notification_time" class="text-zinc-400 flex items-center gap-0.5 shrink-0"
                               title="Notification set">
                               <span>🔔</span> <span x-text="h.notification_time"></span>
                             </span>
@@ -465,9 +587,10 @@
                         </div>
                       </div>
                     </td>
-                    <template x-for="d in weekDates">
-                      <td class="px-2 py-2 text-center" :class="isToday(d) ? 'bg-blue-50/30' : ''">
-                        <div class="flex items-center justify-center gap-1">
+                    <template x-for="d in habitDates">
+                      <td class="px-4 py-2 text-center transition-all relative"
+                        :class="isToday(d) ? 'bg-zinc-100/30' : ''">
+                        <div class="flex items-center justify-center relative">
                           <button @click="toggleMark(h.id, d)" :disabled="isPastMonth(d)"
                             :style="isMarked(h.id,d) ? `background-color: ${h.color || '#000000'}; border-color: ${h.color || '#000000'}; color: white` : ''"
                             :class="[
@@ -479,50 +602,29 @@
                             <span x-show="isMarked(h.id,d)">✓</span>
                           </button>
                           <button x-show="isMarked(h.id,d)" @click="openNoteModal(h.id, d)"
-                            class="text-zinc-400 hover:text-zinc-700 transition-colors" title="Add note">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
-                              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                              stroke-linejoin="round">
+                            class="absolute -top-1 -right-1 border transition-all rounded-full p-0.5 shadow-sm"
+                            :class="hasNote(h.id, d) ? 'bg-amber-100 border-amber-200 text-amber-600' : 'bg-white border-zinc-200 text-zinc-400 hover:text-zinc-700'"
+                            title="Note">
+                            <!-- Show FileText icon if note exists -->
+                            <svg x-show="hasNote(h.id, d)" xmlns="http://www.w3.org/2000/svg" width="10" height="10"
+                              viewBox="0 0 24 24" fill="currentColor" stroke="none">
                               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                              <polyline points="14 2 14 8 20 8"></polyline>
-                              <line x1="16" y1="13" x2="8" y2="13"></line>
-                              <line x1="16" y1="17" x2="8" y2="17"></line>
-                              <polyline points="10 9 9 9 8 9"></polyline>
+                              <polyline points="14 2 14 8 20 8" fill="none" stroke="currentColor" stroke-width="2">
+                              </polyline>
+                              <line x1="16" y1="13" x2="8" y2="13" stroke="white" stroke-width="2"></line>
+                              <line x1="16" y1="17" x2="8" y2="17" stroke="white" stroke-width="2"></line>
+                            </svg>
+                            <!-- Show Plus icon if no note -->
+                            <svg x-show="!hasNote(h.id, d)" xmlns="http://www.w3.org/2000/svg" width="10" height="10"
+                              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                              stroke-linecap="round" stroke-linejoin="round">
+                              <line x1="12" y1="5" x2="12" y2="19"></line>
+                              <line x1="5" y1="12" x2="19" y2="12"></line>
                             </svg>
                           </button>
                         </div>
                       </td>
                     </template>
-                    <td class="px-4 py-3 text-center">
-                      <div
-                        class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-orange-50 text-orange-600 text-xs font-medium border border-orange-100"
-                        x-show="h.streak > 0">
-                        <span>🔥</span>
-                        <span x-text="h.streak"></span>
-                      </div>
-                      <div x-show="!h.streak" class="text-zinc-300">-</div>
-                    </td>
-                    <td class="px-4 py-3 text-right">
-                      <div
-                        class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button class="text-zinc-400 hover:text-zinc-700 transition-colors" @click="openHabitModal(h)"
-                          title="Edit">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                          </svg>
-                        </button>
-                        <button class="text-zinc-400 hover:text-red-500 transition-colors"
-                          @click="confirmAction('Delete this habit?', () => removeHabit(h.id))" title="Delete">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M3 6h18" />
-                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                          </svg>
-                        </button>
-                      </div>
-                    </td>
                   </tr>
                 </template>
               </tbody>
@@ -548,9 +650,10 @@
               <template x-for="h in habits" :key="'pb-'+h.id">
                 <div>
                   <div class="flex items-center justify-between mb-1.5">
-                    <div class="text-sm font-medium text-zinc-700 truncate flex items-center gap-2">
-                      <span x-text="h.icon || '📝'"></span>
-                      <span x-text="h.title"></span>
+                    <div class="flex items-center gap-2 overflow-hidden">
+                      <span x-text="h.icon || '📝'" class="shrink-0"></span>
+                      <span class="text-sm font-medium text-zinc-700 truncate max-w-[150px]" x-text="h.title"
+                        :title="h.title"></span>
                     </div>
                     <div class="text-xs font-medium text-zinc-500 tabular-nums" x-text="weekProgress(h).percentLabel">
                     </div>
@@ -1088,12 +1191,14 @@
                     <div class="flex items-center gap-3">
                       <div class="h-8 w-8 rounded-lg flex items-center justify-center text-sm"
                         :style="`background-color: ${log.color}15; color: ${log.color}`" x-text="log.icon"></div>
-                      <span class="font-semibold text-zinc-700" x-text="log.title"></span>
+                      <div class="font-semibold text-zinc-700 truncate max-w-[150px]" x-text="log.title"
+                        :title="log.title"></div>
                     </div>
                   </td>
                   <td class="px-6 py-4">
                     <template x-if="reportFilters.granularity === 'daily'">
-                      <div class="text-sm text-zinc-600 max-w-md italic" x-text="log.note || '-'"></div>
+                      <div class="text-sm text-zinc-600 max-w-[250px] truncate italic" x-text="log.note || '-'"
+                        :title="log.note"></div>
                     </template>
                     <template x-if="reportFilters.granularity !== 'daily'">
                       <div class="text-xs text-zinc-500">
@@ -1155,178 +1260,256 @@
           </div>
         </div>
       </div>
-  </div>
-  </section>
+      <!-- Insights Section -->
+      <div class="mt-12 bg-white rounded-2xl border border-zinc-200 shadow-xl p-8 mb-8"
+        x-show="detailedLogs.length > 0">
+        <div class="flex justify-between items-center mb-8">
+          <div>
+            <h3 class="text-xl font-bold text-zinc-800">Advanced Insights</h3>
+            <p class="text-sm text-zinc-500">Deeper analysis of your behavioral patterns.</p>
+          </div>
+        </div>
 
-  <!-- PROFILE VIEW -->
-  <section x-show="view === 'profile'" x-cloak class="max-w-xl mx-auto py-8">
-    <div class="bg-white rounded-xl shadow-sm border border-zinc-200 p-8 text-center relative">
-      <!-- Decorative background -->
-      <div class="absolute top-0 left-0 w-full h-32 bg-gradient-to-r from-zinc-800 to-zinc-900 rounded-t-xl"></div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-12">
+          <!-- Hour Heatmap -->
+          <div>
+            <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-4">Productivity by Hour</div>
+            <div class="flex items-end gap-1 h-32 mb-4 group/chart">
+              <template x-for="h in hourDistribution()">
+                <div class="flex-1 bg-zinc-100 rounded-t-sm relative group" :style="`height: ${h.percent}%`"
+                  :class="h.percent > 0 ? 'bg-zinc-800' : 'bg-zinc-50'">
+                  <!-- Tooltip -->
+                  <div
+                    class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-zinc-900 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-30 shadow-xl">
+                    <span x-text="h.label"></span>: <span x-text="h.count"></span> logs
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="flex justify-between text-[8px] font-bold text-zinc-400 uppercase tracking-tighter">
+              <span>12 AM</span>
+              <span>6 AM</span>
+              <span>12 PM</span>
+              <span>6 PM</span>
+              <span>11 PM</span>
+            </div>
+          </div>
 
-      <!-- Sign Out Button - Top Right -->
-      <button @click="logout()"
-        class="absolute top-4 right-4 z-50 px-3 py-1.5 rounded-lg bg-white/20 text-white hover:bg-white/30 transition-all border border-white/30 flex items-center gap-2 text-xs font-semibold shadow-lg group"
-        title="Sign Out">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
-          class="group-hover:translate-x-0.5 transition-transform">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-          <polyline points="16 17 21 12 16 7" />
-          <line x1="21" y1="12" x2="9" y2="12" />
-        </svg>
-        Sign Out
-      </button>
+          <!-- Habit Correlation -->
+          <div>
+            <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-4">Habit Synergies</div>
+            <div class="space-y-3">
+              <template x-for="c in synergies()" :key="c.pair">
+                <div
+                  class="p-3 rounded-xl border border-zinc-100 bg-zinc-50 flex items-center justify-between transition-all hover:shadow-sm">
+                  <div class="flex items-center gap-3">
+                    <div class="flex -space-x-2">
+                      <div
+                        class="h-8 w-8 rounded-full border-2 border-white flex items-center justify-center bg-white shadow-sm text-sm"
+                        x-text="c.iconA"></div>
+                      <div
+                        class="h-8 w-8 rounded-full border-2 border-white flex items-center justify-center bg-white shadow-sm text-sm"
+                        x-text="c.iconB"></div>
+                    </div>
+                    <div>
+                      <div class="text-xs font-bold text-zinc-800" x-text="c.label"></div>
+                      <div class="text-[9px] text-zinc-400 uppercase font-black" x-text="c.description"></div>
+                    </div>
+                  </div>
+                  <div class="text-xs font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg"
+                    x-text="'+' + c.impact + '%'"></div>
+                </div>
+              </template>
+              <div x-show="!synergies().length" class="text-xs text-zinc-400 italic py-4 text-center">Tracking more
+                patterns...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
 
-      <div
-        class="relative w-32 h-32 bg-white p-1 rounded-full mx-auto -mt-16 mb-4 shadow-2xl border-4 border-white overflow-hidden z-10">
-        <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`" alt="avatar"
-          class="w-full h-full rounded-full bg-zinc-50">
+    <!-- PROFILE VIEW -->
+    <section x-show="view === 'profile'" x-cloak class="max-w-xl mx-auto py-8">
+      <div class="bg-white rounded-xl shadow-sm border border-zinc-200 p-8 text-center relative">
+        <!-- Decorative background -->
+        <div class="absolute top-0 left-0 w-full h-32 bg-gradient-to-r from-zinc-800 to-zinc-900 rounded-t-xl"></div>
+
+        <!-- Back Button - Top Left -->
+        <button @click="goBack()"
+          class="absolute top-4 left-4 z-50 px-3 py-1.5 rounded-lg bg-white/20 text-white hover:bg-white/30 transition-all border border-white/30 flex items-center gap-2 text-xs font-semibold shadow-lg group"
+          title="Back">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            class="group-hover:-translate-x-0.5 transition-transform">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+          Back
+        </button>
+
+        <!-- Sign Out Button - Top Right -->
+        <button @click="logout()"
+          class="absolute top-4 right-4 z-50 px-3 py-1.5 rounded-lg bg-white/20 text-white hover:bg-white/30 transition-all border border-white/30 flex items-center gap-2 text-xs font-semibold shadow-lg group"
+          title="Sign Out">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            class="group-hover:translate-x-0.5 transition-transform">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          Sign Out
+        </button>
+
+        <div
+          class="relative w-32 h-32 bg-white p-1 rounded-full mx-auto -mt-16 mb-4 shadow-2xl border-4 border-white overflow-hidden z-10">
+          <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`" alt="avatar"
+            class="w-full h-full rounded-full bg-zinc-50">
+        </div>
+
+        <div class="relative z-10">
+          <h2 class="text-2xl font-bold text-zinc-800 mb-1" x-text="username" style="padding-top:30px;"></h2>
+          <div class="inline-block px-3 py-1 bg-zinc-100 text-zinc-600 rounded-full text-xs font-medium mb-8"
+            x-text="role === 'admin' ? 'Administrator' : 'FlowTrack User'"></div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4 mb-8 text-left">
+          <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+            <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">Level</div>
+            <div class="text-2xl font-bold text-zinc-900" x-text="stats.level"></div>
+          </div>
+          <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+            <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">XP</div>
+            <div class="text-2xl font-bold text-indigo-600" x-text="stats.xp"></div>
+          </div>
+          <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
+            <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">Points</div>
+            <div class="text-2xl font-bold text-amber-500" x-text="stats.points"></div>
+          </div>
+        </div>
+
       </div>
 
-      <div class="relative z-10">
-        <h2 class="text-2xl font-bold text-zinc-800 mb-1" x-text="username" style="padding-top:30px;"></h2>
-        <div class="inline-block px-3 py-1 bg-zinc-100 text-zinc-600 rounded-full text-xs font-medium mb-8"
-          x-text="role === 'admin' ? 'Administrator' : 'FlowTrack User'"></div>
+      <div class="bg-white rounded-xl p-6 border border-zinc-200 text-left mb-8 relative">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+            <span class="text-lg">🔐</span> Security Recovery
+          </h3>
+          <button @click="profileEditing = !profileEditing" class="text-zinc-400 hover:text-zinc-600 transition-colors">
+            <template x-if="!profileEditing">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </template>
+            <span x-show="profileEditing" class="text-[10px] font-bold uppercase">Cancel</span>
+          </button>
+        </div>
+
+        <!-- Read Only -->
+        <div x-show="!profileEditing" class="space-y-4">
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wider font-bold mb-1">Recovery Question</div>
+            <div class="text-sm text-zinc-800 font-medium" x-text="profileForm.recovery_question || 'Not set'"></div>
+          </div>
+          <div>
+            <div class="text-[10px] text-zinc-400 uppercase tracking-wider font-bold mb-1">Secret Answer</div>
+            <div class="text-sm text-zinc-800 font-medium">••••••••</div>
+          </div>
+        </div>
+
+        <!-- Edit Mode -->
+        <div x-show="profileEditing" class="space-y-4" x-transition>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Recovery
+              Question</label>
+            <input type="text" x-model="profileForm.recovery_question"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">New Secret
+              Answer</label>
+            <input type="password" x-model="profileForm.recovery_answer"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50" />
+          </div>
+          <button @click="updateProfileSecurity(); profileEditing = false"
+            class="w-full py-2 bg-zinc-900 text-white rounded-lg text-sm font-bold hover:bg-zinc-800 transition-all shadow-sm">
+            Update Security Settings
+          </button>
+        </div>
       </div>
 
-      <div class="grid grid-cols-3 gap-4 mb-8 text-left">
-        <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
-          <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">Level</div>
-          <div class="text-2xl font-bold text-zinc-900" x-text="stats.level"></div>
-        </div>
-        <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
-          <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">XP</div>
-          <div class="text-2xl font-bold text-indigo-600" x-text="stats.xp"></div>
-        </div>
-        <div class="p-4 bg-zinc-50 rounded-xl border border-zinc-100">
-          <div class="text-xs text-zinc-400 uppercase tracking-wider font-semibold mb-1">Points</div>
-          <div class="text-2xl font-bold text-amber-500" x-text="stats.points"></div>
-        </div>
-      </div>
-
-    </div>
-
-    <div class="bg-white rounded-xl p-6 border border-zinc-200 text-left mb-8 relative">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-          <span class="text-lg">🔐</span> Security Recovery
-        </h3>
-        <button @click="profileEditing = !profileEditing" class="text-zinc-400 hover:text-zinc-600 transition-colors">
-          <template x-if="!profileEditing">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-            </svg>
-          </template>
-          <span x-show="profileEditing" class="text-[10px] font-bold uppercase">Cancel</span>
+      <div class="mt-8 border-zinc-100 flex flex-col gap-3">
+        <button
+          @click="confirmAction('Reset everything? This will permanently delete your level, XP, all badges, and habit/routine history. This cannot be undone.', () => resetProgress())"
+          class="w-full py-2 text-xs text-red-400 hover:text-red-600 transition-colors font-medium underline decoration-red-100">
+          Reset All Progress & History
         </button>
       </div>
+    </section>
 
-      <!-- Read Only -->
-      <div x-show="!profileEditing" class="space-y-4">
-        <div>
-          <div class="text-[10px] text-zinc-400 uppercase tracking-wider font-bold mb-1">Recovery Question</div>
-          <div class="text-sm text-zinc-800 font-medium" x-text="profileForm.recovery_question || 'Not set'"></div>
+    <!-- Add User Modal (Admin Only) -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      x-show="adminUserModal.open" x-cloak x-transition.opacity>
+      <div class="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl transform transition-all"
+        @click.away="adminUserModal.open = false">
+        <div class="text-center mb-6">
+          <div class="w-20 h-20 mx-auto rounded-full bg-zinc-50 border border-zinc-200 p-1 mb-3">
+            <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${adminUserForm.username || 'new'}`"
+              class="w-full h-full rounded-full">
+          </div>
+          <h3 class="text-lg font-bold text-zinc-900">Add New User</h3>
         </div>
-        <div>
-          <div class="text-[10px] text-zinc-400 uppercase tracking-wider font-bold mb-1">Secret Answer</div>
-          <div class="text-sm text-zinc-800 font-medium">••••••••</div>
-        </div>
-      </div>
 
-      <!-- Edit Mode -->
-      <div x-show="profileEditing" class="space-y-4" x-transition>
-        <div>
-          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Recovery
-            Question</label>
-          <input type="text" x-model="profileForm.recovery_question"
-            class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50" />
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Username</label>
+            <input x-model="adminUserForm.username"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
+              placeholder="Enter username" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Initial
+              Password</label>
+            <input type="password" x-model="adminUserForm.password"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
+              placeholder="••••••••" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Role</label>
+            <select x-model="adminUserForm.role"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50">
+              <option value="user">Regular User</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Security
+              Question</label>
+            <input x-model="adminUserForm.recovery_question"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
+              placeholder="e.g. Favorite book?" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Security
+              Answer</label>
+            <input x-model="adminUserForm.recovery_answer"
+              class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
+              placeholder="Answer" />
+          </div>
         </div>
-        <div>
-          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">New Secret
-            Answer</label>
-          <input type="password" x-model="profileForm.recovery_answer"
-            class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50" />
-        </div>
-        <button @click="updateProfileSecurity(); profileEditing = false"
-          class="w-full py-2 bg-zinc-900 text-white rounded-lg text-sm font-bold hover:bg-zinc-800 transition-all shadow-sm">
-          Update Security Settings
-        </button>
-      </div>
-    </div>
 
-    <div class="mt-8 border-zinc-100 flex flex-col gap-3">
-      <button
-        @click="confirmAction('Reset everything? This will permanently delete your level, XP, all badges, and habit/routine history. This cannot be undone.', () => resetProgress())"
-        class="w-full py-2 text-xs text-red-400 hover:text-red-600 transition-colors font-medium underline decoration-red-100">
-        Reset All Progress & History
-      </button>
-    </div>
-  </section>
-
-  <!-- Add User Modal (Admin Only) -->
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-    x-show="adminUserModal.open" x-cloak x-transition.opacity>
-    <div class="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl transform transition-all"
-      @click.away="adminUserModal.open = false">
-      <div class="text-center mb-6">
-        <div class="w-20 h-20 mx-auto rounded-full bg-zinc-50 border border-zinc-200 p-1 mb-3">
-          <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${adminUserForm.username || 'new'}`"
-            class="w-full h-full rounded-full">
+        <div class="mt-8 flex gap-3">
+          <button @click="adminUserModal.open = false"
+            class="flex-1 py-2 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 font-medium transition-colors">Cancel</button>
+          <button @click="adminCreateUser()"
+            class="flex-1 py-2 rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 font-medium shadow-sm transition-all focus:ring-2 focus:ring-offset-2 focus:ring-zinc-900">
+            Create User
+          </button>
         </div>
-        <h3 class="text-lg font-bold text-zinc-900">Add New User</h3>
-      </div>
-
-      <div class="space-y-4">
-        <div>
-          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Username</label>
-          <input x-model="adminUserForm.username"
-            class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
-            placeholder="Enter username" />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Initial
-            Password</label>
-          <input type="password" x-model="adminUserForm.password"
-            class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
-            placeholder="••••••••" />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Role</label>
-          <select x-model="adminUserForm.role"
-            class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50">
-            <option value="user">Regular User</option>
-            <option value="admin">Administrator</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Security
-            Question</label>
-          <input x-model="adminUserForm.recovery_question"
-            class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
-            placeholder="e.g. Favorite book?" />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-1">Security
-            Answer</label>
-          <input x-model="adminUserForm.recovery_answer"
-            class="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-zinc-900 focus:outline-none bg-zinc-50"
-            placeholder="Answer" />
-        </div>
-      </div>
-
-      <div class="mt-8 flex gap-3">
-        <button @click="adminUserModal.open = false"
-          class="flex-1 py-2 rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-50 font-medium transition-colors">Cancel</button>
-        <button @click="adminCreateUser()"
-          class="flex-1 py-2 rounded-lg bg-zinc-900 text-white hover:bg-zinc-800 font-medium shadow-sm transition-all focus:ring-2 focus:ring-offset-2 focus:ring-zinc-900">
-          Create User
-        </button>
       </div>
     </div>
-  </div>
   </div>
 
 

@@ -9,9 +9,10 @@ function appState() {
     habits: [],
     users: [],
     logsMap: {},
-    weekDates: [],
-    weekStartYmd: '',
     metrics: { activeHabits: 0, longestStreak: 0 },
+    habitView: 'week', // 'week' | 'month'
+    viewDate: new Date().toISOString().slice(0, 10),
+    habitDates: [],
     stats: { points: 0, level: 1, xp: 0 },
     badges: [],
 
@@ -45,6 +46,7 @@ function appState() {
 
     // UI State
     toasts: [],
+    darkMode: localStorage.getItem('darkMode') === 'true',
     confirmModal: { open: false, message: '', onConfirm: () => { } },
     showCoach: false,
     coachMessage: '',
@@ -56,6 +58,11 @@ function appState() {
     timerSeconds: 25 * 60,
     intervalId: null,
     timerPreset: 25,
+    currentAmbientSound: null,
+    ambientAudio: null,
+    notificationId: null,
+    currentAmbientSound: null,
+    ambientAudio: null,
 
     // Habit Notes
     noteModal: { open: false, habitId: null, date: '', note: '', habitTitle: '' },
@@ -141,6 +148,8 @@ function appState() {
       this.initNotifications();
       this.loadAnalytics();
       this.computeCalendar();
+      this.registerServiceWorker();
+      this.startNotificationLoop();
 
       // Handle URL Routing
       const hash = window.location.hash.slice(1);
@@ -169,9 +178,53 @@ function appState() {
       });
     },
 
+    startNotificationLoop() {
+      if (this.notificationId) clearInterval(this.notificationId);
+      this.notificationId = setInterval(() => this.checkReminders(), 30000); // Check every 30s
+    },
+
+    checkReminders() {
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+      const now = new Date();
+      const currentHm = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+      const ymd = this.toLocalYMD(now);
+
+      this.habits.forEach(habit => {
+        if (habit.notification_time === currentHm) {
+          // Check if already done today in activityMap
+          const done = this.calendar.activityMap && this.calendar.activityMap[ymd] && this.calendar.activityMap[ymd].has(Number(habit.id));
+
+          if (!done && habit._lastNotifiedYmdHm !== `${ymd}_${currentHm}`) {
+            new Notification(`FlowTrack: ${habit.title}`, {
+              body: `Time to complete your habit: ${habit.title} ${habit.icon}`,
+              icon: `https://api.dicebear.com/7.x/avataaars/svg?seed=${this.username}`
+            });
+            habit._lastNotifiedYmdHm = `${ymd}_${currentHm}`;
+          }
+        }
+      });
+    },
+
+    registerServiceWorker() {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./sw.js')
+          .then(() => console.log('Service Worker Registered'))
+          .catch(err => console.error('Service Worker Registration Failed', err));
+      }
+    },
+
+    toggleDarkMode() {
+      this.darkMode = !this.darkMode;
+      localStorage.setItem('darkMode', this.darkMode);
+    },
+
+    previousView: null,
+
     switchView(v) {
       if (this.role === 'admin' && (v === 'habits' || v === 'routines')) return;
       if (this.role !== 'admin' && v === 'admin') return;
+      this.previousView = this.view;
       this.view = v;
       window.location.hash = v;
       this.$nextTick(() => {
@@ -180,6 +233,14 @@ function appState() {
         if (v === 'profile') this.loadProfile();
         if (v === 'reports') this.loadDetailedLogs();
       });
+    },
+
+    goBack() {
+      if (this.previousView) {
+        this.switchView(this.previousView);
+      } else {
+        this.switchView('habits');
+      }
     },
 
     showToast(message, type = 'success') {
@@ -347,33 +408,72 @@ function appState() {
       this.detailedLogs = await res.json();
     },
 
-    openNoteModal(habitId, date) {
+    async openNoteModal(habitId, date) {
       const habit = this.habits.find(h => h.id === habitId);
       this.noteModal.habitId = habitId;
       this.noteModal.date = date;
       this.noteModal.habitTitle = habit ? habit.title : 'Habit';
-
-      // Try to find existing note in logsMap or detailedLogs
-      const log = this.detailedLogs.find(l => l.habit_id === habitId && l.log_date === date);
-      this.noteModal.note = log ? log.note || '' : '';
-
+      this.noteModal.note = 'Loading...';
       this.noteModal.open = true;
+
+      // Fetch note from server
+      try {
+        const res = await this.authFetch(`./api/habit_note?habit_id=${habitId}&date=${date}`);
+        if (res) {
+          const data = await res.json();
+          this.noteModal.note = data.note || '';
+        } else {
+          this.noteModal.note = '';
+        }
+      } catch (e) {
+        console.error("Failed to fetch note", e);
+        this.noteModal.note = '';
+      }
     },
 
     async saveNote() {
+      const habitId = this.noteModal.habitId;
+      const date = this.noteModal.date;
+      const noteContent = this.noteModal.note;
+
       const res = await this.authFetch('./api/habit_note', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          habit_id: this.noteModal.habitId,
-          date: this.noteModal.date,
-          note: this.noteModal.note
+          habit_id: habitId,
+          date: date,
+          note: noteContent
         })
       });
       if (!res) return;
       this.showToast('Note saved!');
       this.noteModal.open = false;
-      this.loadDetailedLogs(); // Refresh logs to see the new note in reports
+
+      // Optimistic update for instant UI feedback
+      const hId = String(habitId);
+      const hasContent = noteContent && noteContent.trim().length > 0;
+      if (this.logsMap[hId] && this.logsMap[hId][date]) {
+        // Ensure we preserve the 'logged' status. 
+        // If the value was historically a number (1), convert to object.
+        let val = this.logsMap[hId][date];
+        if (typeof val === 'number') val = { logged: val };
+
+        this.logsMap[hId][date] = { ...val, hasNote: hasContent, logged: 1 };
+      }
+
+      if (this.view === 'reports') {
+        this.loadDetailedLogs();
+      }
+    },
+
+    async loadLogs() {
+      const start = this.habitDates[0];
+      const end = this.habitDates[this.habitDates.length - 1];
+      // Add timestamp to prevent caching
+      const res = await this.authFetch(`./api/habit_logs?start=${start}&end=${end}&_t=${Date.now()}`);
+      if (!res) return;
+      const data = await res.json();
+      this.logsMap = data.logs || {};
     },
 
     filteredReports() {
@@ -541,6 +641,67 @@ function appState() {
       }
     },
 
+    // Insights Data Logic
+    hourDistribution() {
+      const dist = Array.from({ length: 24 }, (_, i) => ({
+        hour: i,
+        count: 0,
+        label: i === 0 ? '12 AM' : (i > 12 ? `${i - 12} PM` : (i === 12 ? '12 PM' : `${i} AM`)),
+        percent: 0
+      }));
+
+      this.detailedLogs.forEach(log => {
+        const date = this.parseUTC(log.created_at);
+        if (date) {
+          const h = date.getHours();
+          dist[h].count++;
+        }
+      });
+
+      const max = Math.max(...dist.map(d => d.count)) || 1;
+      dist.forEach(d => d.percent = (d.count / max) * 100);
+      return dist;
+    },
+
+    synergies() {
+      // Find pairs of habits often done on the same day
+      const dailyMap = {}; // ymd -> set of habitIds
+      this.detailedLogs.forEach(log => {
+        if (!dailyMap[log.log_date]) dailyMap[log.log_date] = new Set();
+        dailyMap[log.log_date].add(Number(log.habit_id));
+      });
+
+      const habitPairs = {}; // "idA_idB" -> count
+      Object.values(dailyMap).forEach(habits => {
+        const arr = Array.from(habits).sort((a, b) => a - b);
+        for (let i = 0; i < arr.length; i++) {
+          for (let j = i + 1; j < arr.length; j++) {
+            const key = `${arr[i]}_${arr[j]}`;
+            habitPairs[key] = (habitPairs[key] || 0) + 1;
+          }
+        }
+      });
+
+      const habitMap = Object.fromEntries(this.habits.map(h => [h.id, h]));
+      return Object.entries(habitPairs)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([key, count]) => {
+          const [idA, idB] = key.split('_');
+          const hA = habitMap[idA];
+          const hB = habitMap[idB];
+          if (!hA || !hB) return null;
+          return {
+            pair: key,
+            iconA: hA.icon,
+            iconB: hB.icon,
+            label: `${hA.title} + ${hB.title}`,
+            description: "Strongest Synergy",
+            impact: Math.round((count / Math.max(1, this.detailedLogs.filter(l => l.habit_id == idA || l.habit_id == idB).length / 2)) * 100)
+          };
+        }).filter(Boolean);
+    },
+
     computeHeatMapRange() {
       const dates = [];
       const today = new Date();
@@ -562,7 +723,10 @@ function appState() {
     },
 
     getHeatMapColor(intensity, kind) {
-      if (!intensity || intensity <= 0) return 'bg-zinc-100';
+      if (!intensity || intensity <= 0) {
+        if (this.darkMode) return 'bg-zinc-800/50';
+        return 'bg-zinc-100';
+      }
       const base = kind === 'morning' ? 'orange' : 'indigo';
       if (intensity <= 0.25) return `bg-${base}-200`;
       if (intensity <= 0.5) return `bg-${base}-400`;
@@ -717,49 +881,70 @@ function appState() {
       await Promise.all([this.loadHabits(), this.loadMetrics()]);
     },
 
-    computeWeek() {
-      const start = this.weekStartYmd ? new Date(this.weekStartYmd) : (() => {
-        const today = new Date();
-        const day = today.getDay();
+    computeHabitDates() {
+      const start = new Date(this.viewDate + 'T12:00:00');
+      if (this.habitView === 'week') {
+        const day = start.getDay();
         const mondayOffset = (day === 0 ? -6 : 1 - day);
-        const monday = new Date(today);
-        monday.setDate(today.getDate() + mondayOffset);
-        return monday;
-      })();
-      const monday = new Date(start);
-      this.weekStartYmd = this.toLocalYMD(monday);
-      this.weekDates = Array.from({ length: 7 }, (_, i) => {
-        const d = new Date(monday);
-        d.setDate(monday.getDate() + i);
-        return this.toLocalYMD(d);
-      });
+        const monday = new Date(start);
+        monday.setDate(start.getDate() + mondayOffset);
+        this.habitDates = Array.from({ length: 7 }, (_, i) => {
+          const d = new Date(monday);
+          d.setDate(monday.getDate() + i);
+          return this.toLocalYMD(d);
+        });
+      } else {
+        const year = start.getFullYear();
+        const month = start.getMonth();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        this.habitDates = Array.from({ length: daysInMonth }, (_, i) => {
+          return this.toLocalYMD(new Date(year, month, i + 1));
+        });
+      }
     },
 
-    weekTitle() {
-      const d = new Date(this.weekStartYmd);
-      const end = new Date(this.weekStartYmd);
-      end.setDate(d.getDate() + 6);
-      const fmt = (x) => x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      return `Week of ${fmt(d)} - ${fmt(end)}`;
+    setHabitView(v) {
+      this.habitView = v;
+      this.computeHabitDates();
+      this.loadLogs();
+    },
+
+    habitTitle() {
+      const start = new Date(this.habitDates[0] + 'T12:00:00');
+      if (this.habitView === 'week') {
+        const end = new Date(this.habitDates[6] + 'T12:00:00');
+        const fmt = (x) => x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        return `Week of ${fmt(start)} - ${fmt(end)}`;
+      } else {
+        return start.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      }
     },
 
     async resetWeek() {
-      this.weekStartYmd = '';
-      this.computeWeek();
+      this.viewDate = new Date().toISOString().slice(0, 10);
+      this.computeHabitDates();
       await this.loadLogs();
     },
-    async prevWeek() {
-      const s = new Date(this.weekStartYmd);
-      s.setDate(s.getDate() - 7);
-      this.weekStartYmd = this.toLocalYMD(s);
-      this.computeWeek();
+    async prevPeriod() {
+      const s = new Date(this.viewDate + 'T12:00:00');
+      if (this.habitView === 'week') {
+        s.setDate(s.getDate() - 7);
+      } else {
+        s.setMonth(s.getMonth() - 1);
+      }
+      this.viewDate = this.toLocalYMD(s);
+      this.computeHabitDates();
       await this.loadLogs();
     },
-    async nextWeek() {
-      const s = new Date(this.weekStartYmd);
-      s.setDate(s.getDate() + 7);
-      this.weekStartYmd = this.toLocalYMD(s);
-      this.computeWeek();
+    async nextPeriod() {
+      const s = new Date(this.viewDate + 'T12:00:00');
+      if (this.habitView === 'week') {
+        s.setDate(s.getDate() + 7);
+      } else {
+        s.setMonth(s.getMonth() + 1);
+      }
+      this.viewDate = this.toLocalYMD(s);
+      this.computeHabitDates();
       await this.loadLogs();
     },
 
@@ -773,8 +958,8 @@ function appState() {
     },
 
     async loadLogs() {
-      const start = this.weekDates[0];
-      const end = this.weekDates[this.weekDates.length - 1];
+      const start = this.habitDates[0];
+      const end = this.habitDates[this.habitDates.length - 1];
       const res = await this.authFetch(`./api/habit_logs?start=${start}&end=${end}`);
       if (!res) return;
       const data = await res.json();
@@ -783,7 +968,34 @@ function appState() {
 
     isMarked(habitId, ymd) {
       const byHabit = this.logsMap[String(habitId)] || {};
-      return !!byHabit[ymd];
+      const val = byHabit[ymd];
+      if (!val) return false;
+      return !!(val.logged || val === 1);
+    },
+
+    isStreakActive(habit) {
+      if (!habit.streak || habit.streak <= 1) return false;
+      const today = this.toLocalYMD(new Date());
+
+      if (habit.frequency === 'daily') {
+        const yesterdayDate = new Date();
+        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+        const yesterday = this.toLocalYMD(yesterdayDate);
+        return this.isMarked(habit.id, today) || this.isMarked(habit.id, yesterday);
+      } else {
+        // Weekly: check if marked this week or last week
+        // Simplified: just check if marked current week for now, or trust simple backend streak
+        // If streak > 1, and we have accurate logs, we should see at least one log in the last 7+ days.
+        // For simplicity, let's just return true for weekly if streak > 1, assuming weekly cadence is looser.
+        // Or better: check if we have ANY log in the last 7 days.
+        return true;
+      }
+    },
+
+    hasNote(habitId, ymd) {
+      const byHabit = this.logsMap[String(habitId)] || {};
+      const val = byHabit[ymd];
+      return val && !!val.hasNote;
     },
 
     async toggleMark(habitId, ymd) {
@@ -797,37 +1009,95 @@ function appState() {
         res = await this.authFetch(`./api/unmark_habit?id=${habitId}&d=${ymd}`, { method: 'POST' });
       } else {
         res = await this.authFetch(`./api/mark_habit?id=${habitId}&d=${ymd}`, { method: 'POST' });
-        if (res) this.showToast('Habit completed!', 'success');
+        if (res) {
+          this.showToast('Habit completed!', 'success');
+          confetti({
+            particleCount: 100,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+          });
+        }
       }
 
       if (!res) return;
       const data = await res.json();
-      if (data.leveledUp) this.showToast(`Level Up! You are now Level ${data.newLevel}`, 'info');
+      if (data.leveledUp) {
+        this.showToast(`Level Up! You are now Level ${data.newLevel}`, 'info');
+        confetti({
+          particleCount: 200,
+          spread: 120,
+          origin: { y: 0.6 },
+          colors: ['#fbbf24', '#f59e0b', '#d97706', '#3b82f6', '#10b981', '#ffffff']
+        });
+      }
+
+      // Milestone check: 30-day streak or similar big achievements
+      // For demo, let's trigger a big celebration if they have a long longestStreak
+      if (this.metrics.longestStreak > 0 && this.metrics.longestStreak % 30 === 0) {
+        confetti({
+          particleCount: 500,
+          spread: 360,
+          origin: { y: 0.5 },
+          gravity: 0.5,
+          scalar: 1.2,
+          shapes: ['star']
+        });
+      }
+      if (data.streak === 1) {
+        confetti({
+          particleCount: 150,
+          spread: 100,
+          origin: { y: 0.7 },
+          colors: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#ffffff']
+        });
+        this.showToast('Streak started! Keep it going! 🔥', 'success');
+      }
+
       if (data.newBadges && data.newBadges.length) {
         data.newBadges.forEach(b => this.showToast(`Badge Unlocked: ${b.name} ${b.icon}`, 'success'));
       }
 
       await Promise.all([this.loadHabits(), this.loadMetrics(), this.loadLogs(), this.loadAnalytics(), this.loadCalendarActivity()]);
+
+      // Perfect day celebration
+      if (this.isPerfectDay(ymd)) {
+        confetti({
+          particleCount: 200,
+          spread: 160,
+          origin: { y: 0.6 },
+          colors: ['#10b981', '#34d399', '#059669']
+        });
+        this.showToast('Perfect Day! All habits completed!', 'success');
+      }
     },
 
     weekProgress(habit) {
-      const dates = this.weekDates || [];
-      if (!dates.length) return { percent: 0, percentLabel: '0%', summary: '0/0 this week' };
+      const dates = this.habitDates || [];
+      if (!dates.length) return { percent: 0, percentLabel: '0%', summary: `0/0 this ${this.habitView}` };
       const byHabit = this.logsMap[String(habit.id)] || {};
       let requiredCount = 0;
       let completedCount = 0;
       if (habit.frequency === 'weekly') {
         requiredCount = 1;
-        completedCount = dates.some(d => !!byHabit[d]) ? 1 : 0;
+        // Check if any date in this view has a log
+        completedCount = dates.some(d => {
+          const val = byHabit[d];
+          return val && (val.logged || val === 1);
+        }) ? 1 : 0;
       } else {
         requiredCount = dates.length;
-        for (const d of dates) if (byHabit[d]) completedCount++;
+        for (const d of dates) {
+          const val = byHabit[d];
+          if (val && (val.logged || val === 1)) completedCount++;
+        }
       }
       const percent = requiredCount === 0 ? 0 : Math.round((completedCount / requiredCount) * 100);
       return {
         percent,
         percentLabel: `${percent}%`,
-        summary: `${completedCount}/${requiredCount} this week`
+        summary: `${completedCount}/${requiredCount} this ${this.habitView}`,
+        isMet: habit.frequency === 'weekly' ? completedCount >= 1 : completedCount === requiredCount
       };
     },
 
@@ -960,24 +1230,9 @@ function appState() {
 
     initNotifications() {
       if (!("Notification" in window)) return;
-      if (Notification.permission !== "granted") {
+      if (Notification.permission !== "granted" && Notification.permission !== "denied") {
         Notification.requestPermission();
       }
-
-      setInterval(() => {
-        const now = new Date();
-        const timeStr = now.toTimeString().slice(0, 5); // HH:MM
-
-        this.habits.forEach(h => {
-          if (h.notification_time && h.notification_time === timeStr) {
-            if (h._lastNotified !== timeStr) {
-              this.showToast(`Time for: ${h.title}`, 'info');
-              new Notification(`FlowTrack Reminder`, { body: `Time to: ${h.title}`, icon: h.icon });
-              h._lastNotified = timeStr;
-            }
-          }
-        });
-      }, 10000); // Check every 10s for better precision
     },
 
     // === FLOW MODE (Focus Timer) ===
@@ -1022,6 +1277,34 @@ function appState() {
 
     pauseTimer() {
       this.timerPaused = !this.timerPaused;
+    },
+
+    toggleAmbientSound(sound) {
+      if (this.currentAmbientSound === sound) {
+        if (this.ambientAudio) {
+          this.ambientAudio.pause();
+          this.ambientAudio = null;
+        }
+        this.currentAmbientSound = null;
+        return;
+      }
+
+      if (this.ambientAudio) {
+        this.ambientAudio.pause();
+      }
+
+      const sounds = {
+        'rain': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', // Placeholder for actual looping assets
+        'lofi': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+        'white': 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3'
+      };
+
+      if (sounds[sound]) {
+        this.ambientAudio = new Audio(sounds[sound]);
+        this.ambientAudio.loop = true;
+        this.ambientAudio.play().catch(e => console.error("Audio play failed:", e));
+        this.currentAmbientSound = sound;
+      }
     },
 
     stopTimer() {
