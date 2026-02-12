@@ -1,7 +1,7 @@
 {
   "name": "flowtrack",
   "version": "1.0.0",
-  "description": "Minimalist task and habit manager built with PHP, MySQL, AlpineJS, and TailwindCSS.",
+  "description": "Minimalist habit and routine manager built with Node.js, Express, SQLite, and Vanilla JS.",
   "main": "index.js",
   "scripts": {
     "start": "node src/server.js",

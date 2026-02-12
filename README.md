@@ -1,9 +1,14 @@
 # FlowTrack
 
-Minimalist task and habit manager built with Node.js, Express, SQLite, AlpineJS, and TailwindCSS.
+**FlowTrack** is a minimalist yet powerful habit and routine manager designed to help you build consistency, track your progress, and stay focused. 
 
-## Setup
+It combines essential productivity tools with gamification elements like streaks, levels, and badges to make self-improvement engaging.
 
+## Documentation
+
+For a comprehensive guide on features, installation, and usage, please see the [Product Documentation (PRODUCT_DOCS.md)](./PRODUCT_DOCS.md).
+
+## Quick Start
 1. Install dependencies:
    ```bash
    npm install
@@ -13,23 +18,17 @@ Minimalist task and habit manager built with Node.js, Express, SQLite, AlpineJS,
    ```bash
    npm start
    ```
-   Or run the executable directly:
-   ```bash
-   ./src/server.js
-   ```
 
 3. Visit `http://localhost:3000`.
 
-## Database
-The application uses SQLite (`database.sqlite`). The database file will be automatically created in the project root upon the first run.
+## Features
+- **Habit Tracking**: Define habits, frequency, and track streaks.
+- **Daily Routines**: Manage Morning and Night routines.
+- **Focus Mode**: Built-in Pomodoro timer with ambient sounds.
+- **Gamification**: Earn XP, level up, and unlock badges.
+- **Analytics**: Visualize your progress with charts and heatmaps.
+- **AI Coach**: Get personalized advice based on your activity.
 
-## API Endpoints
-- `/api/tasks` GET/POST/PUT/DELETE
-- `/api/categories` GET/POST
-- `/api/habits` GET/POST/DELETE
-- `/api/mark_habit` POST?id=HABIT_ID
-- `/api/metrics` GET
-- `/api/routines` GET/POST/PUT/DELETE
-
-## Legacy
-The original PHP backend files have been moved to `legacy_api/`.
+## Tech Stack
+- **Backend**: Node.js, Express, SQLite
+- **Frontend**: Vanilla JS, Alpine.js, TailwindCSS
